@@ -75,6 +75,10 @@ from .microduck_roulade_env_cfg import (
     make_microduck_roulade_env_cfg,
     MicroduckRouladeRlCfg,
 )
+from .microduck_polite_bow_env_cfg import (
+    make_microduck_polite_bow_env_cfg,
+    MicroduckPoliteBowRlCfg,
+)
 from .backlash import make_backlash_variant
 
 # Standard velocity task
@@ -230,6 +234,16 @@ register_mjlab_task(
     env_cfg=make_microduck_roulade_env_cfg(),
     play_env_cfg=make_microduck_roulade_env_cfg(play=True),
     rl_cfg=MicroduckRouladeRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# PoliteBow — expressive episodic trick: bow from a stand and come back up.
+# Constant-command (publishable as --kind episodic --duration-s 3.5).
+register_mjlab_task(
+    task_id="Mjlab-PoliteBow-Flat-MicroDuck",
+    env_cfg=make_microduck_polite_bow_env_cfg(),
+    play_env_cfg=make_microduck_polite_bow_env_cfg(play=True),
+    rl_cfg=MicroduckPoliteBowRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 
