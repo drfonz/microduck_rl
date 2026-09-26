@@ -74,3 +74,13 @@ def test_play_variant_builds():
     cfg = make_microduck_polite_bow_env_cfg(play=True)
     assert "bow_pitch" in cfg.rewards
     assert cfg.episode_length_s == EPISODE_LENGTH_S
+
+
+def test_feet_flat_is_scoped_to_feet():
+    """Regression: without an explicit asset_cfg the default SceneEntityCfg is
+    never resolved and feet_flat sums over every robot site (head included),
+    which penalised the bow itself (first 3080 Ti run, 26 Sep 2026)."""
+    term = make_microduck_polite_bow_env_cfg().rewards["feet_flat"]
+    asset_cfg = term.params.get("asset_cfg")
+    assert asset_cfg is not None
+    assert list(asset_cfg.site_names) == ["left_foot", "right_foot"]

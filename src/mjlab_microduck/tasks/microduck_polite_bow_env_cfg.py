@@ -37,6 +37,7 @@ from mjlab.managers import (
     TerminationTermCfg,
 )
 from mjlab.envs.mdp import terminations as mjlab_terminations
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.rl import RslRlModelCfg, RslRlOnPolicyRunnerCfg
 
 from mjlab_microduck.tasks import bow_mdp
@@ -155,6 +156,12 @@ def make_microduck_polite_bow_env_cfg(play: bool = False) -> ManagerBasedRlEnvCf
     cfg.rewards["feet_flat"] = RewardTermCfg(
         func=microduck_mdp.feet_flat_penalty,  # returns >= 0 (cost) → negative weight
         weight=-1.0,
+        # asset_cfg MUST be passed explicitly: the function's default
+        # SceneEntityCfg is never resolved by the reward manager, so its
+        # site_ids stay slice(None) and the cost sums over ALL 7 robot sites
+        # (imu, head_imu, head_camera, tof, mouth_tip...), i.e. it penalises
+        # head tilt, which fights the bow. Feet only here.
+        params={"asset_cfg": SceneEntityCfg("robot", site_names=("left_foot", "right_foot"))},
     )
     # Smoothness from step 0 (slow careful tasks want heavier smoothness than
     # walking, AGENTS.md), tightened by curriculum once the bow exists.
