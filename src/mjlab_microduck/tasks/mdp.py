@@ -4708,6 +4708,18 @@ def face_down_prob_curriculum(
 class VelocityCommandCommandOnly(UniformVelocityCommand):
     """Like UniformVelocityCommand but only draws the command arrows (no actual velocity arrows)."""
 
+    # Viser's joystick "Max" slider has min=0.1; mjlab seeds it with the cfg's
+    # max range, so tricks with near-zero ranges (roulade, PoliteBow: ±0.01)
+    # trip viser's `max >= value >= min` assert and `play --viewer viser`
+    # crashes. A joystick is meaningless for those tasks: skip the GUI.
+    _JOYSTICK_MIN_RANGE = 0.1
+
+    def create_gui(self, name, server, get_env_idx, on_change=None, request_action=None) -> None:
+        r = self.cfg.ranges
+        if max(r.lin_vel_x[1], r.lin_vel_y[1], r.ang_vel_z[1]) < self._JOYSTICK_MIN_RANGE:
+            return
+        super().create_gui(name, server, get_env_idx, on_change, request_action)
+
     def _resample_command(self, env_ids: torch.Tensor) -> None:
         super()._resample_command(env_ids)
         # Turn-in-place practice: for a fraction of envs, zero the linear velocity

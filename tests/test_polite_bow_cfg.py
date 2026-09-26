@@ -84,3 +84,19 @@ def test_feet_flat_is_scoped_to_feet():
     asset_cfg = term.params.get("asset_cfg")
     assert asset_cfg is not None
     assert list(asset_cfg.site_names) == ["left_foot", "right_foot"]
+
+
+def test_viser_joystick_skipped_for_near_zero_command():
+    """Regression: `play --viewer viser` asserted in viser's slider for tasks whose
+    command ranges are below viser's 0.1 slider minimum (PoliteBow, roulade)."""
+    from types import SimpleNamespace
+
+    from mjlab_microduck.tasks.mdp import VelocityCommandCommandOnly
+
+    class _NoServer:
+        def __getattr__(self, _):
+            raise AssertionError("GUI must not be built for a near-zero command")
+
+    cmd_cfg = make_microduck_polite_bow_env_cfg(play=True).commands["twist"]
+    fake = SimpleNamespace(cfg=cmd_cfg, _JOYSTICK_MIN_RANGE=0.1)
+    VelocityCommandCommandOnly.create_gui(fake, "twist", _NoServer(), lambda: 0)
