@@ -100,3 +100,43 @@ def test_viser_joystick_skipped_for_near_zero_command():
     cmd_cfg = make_microduck_polite_bow_env_cfg(play=True).commands["twist"]
     fake = SimpleNamespace(cfg=cmd_cfg, _JOYSTICK_MIN_RANGE=0.1)
     VelocityCommandCommandOnly.create_gui(fake, "twist", _NoServer(), lambda: 0)
+
+
+def test_gait_bank_spawn_wiring():
+    """Walk→bow hand-off (rehearsal 27 Sep 2026: any mid-stride trigger fell).
+    Training mixes in mid-walk spawns AFTER the still-stand reset; play/eval
+    default to still stands; the actor and critic see the handed-over action."""
+    from mjlab_microduck.tasks.microduck_polite_bow_env_cfg import GAIT_BANK_PATH, GAIT_BANK_PROB
+
+    train = make_microduck_polite_bow_env_cfg()
+    names = list(train.events.keys())
+    assert names.index("gait_bank_spawn") > names.index("set_roulade_state")
+    ev = train.events["gait_bank_spawn"]
+    assert ev.func is bow_mdp.reset_from_gait_bank and ev.mode == "reset"
+    assert ev.params["bank_path"] == GAIT_BANK_PATH
+    assert 0.0 < ev.params["prob"] == GAIT_BANK_PROB < 1.0  # still stands stay in the mix
+    assert ev.params["stand_joint_noise_std"] > 0.0
+    play = make_microduck_polite_bow_env_cfg(play=True)
+    assert play.events["gait_bank_spawn"].params["prob"] == 0.0
+    for cfg in (train, play):
+        for group in ("actor", "critic"):
+            assert cfg.observations[group].terms["actions"].func is bow_mdp.last_action_with_handoff
+
+
+def test_gait_bank_loader_errors(tmp_path):
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="make_gait_bank"):
+        bow_mdp.load_gait_bank(str(tmp_path / "missing.pt"), "cpu")
+    bad = tmp_path / "bad.pt"
+    torch.save({"qpos": torch.zeros(3, 21), "qvel": torch.zeros(3, 20)}, bad)
+    with pytest.raises(ValueError, match="action"):
+        bow_mdp.load_gait_bank(str(bad), "cpu")
+    ragged = tmp_path / "ragged.pt"
+    torch.save({"qpos": torch.zeros(3, 21), "qvel": torch.zeros(2, 20), "action": torch.zeros(3, 14)}, ragged)
+    with pytest.raises(ValueError, match="ragged"):
+        bow_mdp.load_gait_bank(str(ragged), "cpu")
+    good = tmp_path / "good.pt"
+    torch.save({"qpos": torch.ones(4, 21), "qvel": torch.ones(4, 20), "action": torch.ones(4, 14)}, good)
+    bank = bow_mdp.load_gait_bank(str(good), "cpu")
+    assert bank["qpos"].shape == (4, 21) and bank["action"].dtype == torch.float32

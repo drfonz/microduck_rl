@@ -212,3 +212,127 @@ def bow_clock_obs(env: ManagerBasedRlEnv, profile: dict, period: float) -> torch
     t = _episode_time(env)
     w = 2.0 * math.pi * t / period
     return torch.stack((bow_blend_at(t, **profile), torch.sin(w), torch.cos(w)), dim=-1)
+
+
+# ── Hand-off from a walk: spawn from recorded gait states ────────────────────
+#
+# The first PoliteBow policy only ever started from a still stand, and toppled
+# whenever it was triggered mid-stride (rehearsal, 27 Sep 2026). On the robot
+# the runtime hands over at whatever point of the walk cycle the button is
+# pressed, with the walking policy's last action still in the observation.
+# So a fraction of episodes starts from REAL walking states: snapshots of the
+# official walking policy running in this same env (same MJCF, same BAM
+# actuators), recorded by scripts/make_gait_bank.py. The walking policy's last
+# action is carried over into the ``actions`` observation, as the runtime does.
+# The bow reference still starts at t = 0: the actor has no clock, so a "wait,
+# then bow" profile would be unlearnable from a still stand; the smoothstep
+# ramp (≈2° after 0.24 s) is gentle enough to absorb the stride.
+
+GAIT_BANK_KEYS = ("qpos", "qvel", "action")
+
+
+def load_gait_bank(path: str, device) -> dict[str, torch.Tensor]:
+    """Load a bank written by scripts/make_gait_bank.py onto ``device``."""
+    import os
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"gait bank not found at {path!r}. Record it first (GPU box):\n"
+            "  uv run python scripts/make_gait_bank.py --onnx <walking policy>.onnx\n"
+            "or train without walk spawns: --env.events.gait_bank_spawn.params.prob 0"
+        )
+    bank = torch.load(path, map_location="cpu", weights_only=False)
+    missing = [k for k in GAIT_BANK_KEYS if k not in bank]
+    if missing:
+        raise ValueError(f"gait bank {path} lacks {missing}")
+    n = bank["qpos"].shape[0]
+    if n == 0 or any(bank[k].shape[0] != n for k in GAIT_BANK_KEYS):
+        raise ValueError(f"gait bank {path} is empty or ragged")
+    return {k: bank[k].to(device=device, dtype=torch.float32) for k in GAIT_BANK_KEYS}
+
+
+def _gait_bank(env: ManagerBasedRlEnv, path: str) -> dict[str, torch.Tensor]:
+    cache = env.__dict__.setdefault("_bow_gait_bank_cache", {})
+    if path not in cache:
+        bank = load_gait_bank(path, env.device)
+        nq, nv = env.sim.data.qpos.shape[1], env.sim.data.qvel.shape[1]
+        if bank["qpos"].shape[1] != nq or bank["qvel"].shape[1] != nv:
+            raise ValueError(
+                f"gait bank {path} was recorded for nq={bank['qpos'].shape[1]}, "
+                f"nv={bank['qvel'].shape[1]} but this env has nq={nq}, nv={nv}. "
+                "Regenerate it with scripts/make_gait_bank.py for this task."
+            )
+        cache[path] = bank
+    return cache[path]
+
+
+def _handoff_buffers(env: ManagerBasedRlEnv) -> tuple[torch.Tensor, torch.Tensor]:
+    if not hasattr(env, "_bow_handoff_pending"):
+        n_act = env.action_manager.total_action_dim
+        env._bow_handoff_pending = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        env._bow_handoff_action = torch.zeros(env.num_envs, n_act, device=env.device)
+    return env._bow_handoff_pending, env._bow_handoff_action
+
+
+def reset_from_gait_bank(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    bank_path: str | None = None,
+    prob: float = 0.0,
+    stand_joint_noise_std: float = 0.0,
+    asset_cfg: SceneEntityCfg = _ROBOT,
+) -> None:
+    """Reset event, AFTER ``set_roulade_state``: a ``prob`` share of the envs
+    being reset are overwritten with a random walking state from the bank;
+    the rest (still stands) get ``stand_joint_noise_std`` servo noise, which
+    the roulade reset only applies to its mid-roll bucket."""
+    if env_ids is None or len(env_ids) == 0:
+        return
+    env_ids = env_ids.to(env.device, dtype=torch.long)
+    pending, handoff_action = _handoff_buffers(env)
+    pending[env_ids] = False
+
+    use_bank = torch.zeros(len(env_ids), dtype=torch.bool, device=env.device)
+    if prob > 0.0 and bank_path:
+        use_bank = torch.rand(len(env_ids), device=env.device) < prob
+
+    stand_ids = env_ids[~use_bank]
+    if len(stand_ids) > 0 and stand_joint_noise_std > 0.0:
+        asset: Entity = env.scene[asset_cfg.name]
+        cols = torch.tensor([7 + j for j in _servo_ids(env, asset)], device=env.device)
+        noise = torch.randn(len(stand_ids), len(cols), device=env.device) * stand_joint_noise_std
+        env.sim.data.qpos[stand_ids.unsqueeze(1), cols.unsqueeze(0)] += noise
+
+    walk_ids = env_ids[use_bank]
+    if len(walk_ids) == 0:
+        return
+    bank = _gait_bank(env, bank_path)
+    pick = torch.randint(0, bank["qpos"].shape[0], (len(walk_ids),), device=env.device)
+    qpos = bank["qpos"][pick].clone()
+    # The bank stores trunk xy relative to its env origin; re-anchor here.
+    qpos[:, 0:3] += env.scene.env_origins[walk_ids]
+    env.sim.data.qpos[walk_ids] = qpos
+    env.sim.data.qvel[walk_ids] = bank["qvel"][pick]
+    handoff_action[walk_ids] = bank["action"][pick]
+    pending[walk_ids] = True
+
+
+def last_action_with_handoff(env: ManagerBasedRlEnv) -> torch.Tensor:
+    """``mdp.last_action`` plus the walk→bow hand-off.
+
+    The action manager zeroes its history AFTER reset events run, so the
+    walking policy's last action is parked by ``reset_from_gait_bank`` and
+    written into the action history here, on the first observation of the new
+    episode. From then on this is exactly ``env.action_manager.action``, and
+    ``action_rate_l2`` on the first step is measured against the walk's action.
+    """
+    pending = getattr(env, "_bow_handoff_pending", None)
+    if pending is not None and bool(pending.any()):
+        ids = pending.nonzero().squeeze(-1)
+        am = env.action_manager
+        a = env._bow_handoff_action[ids]
+        am._action[ids] = a
+        am._prev_action[ids] = a
+        am._prev_prev_action[ids] = a
+        pending[ids] = False
+    return env.action_manager.action

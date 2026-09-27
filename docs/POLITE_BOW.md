@@ -61,6 +61,40 @@ The actor cannot see the clock, so the bottom "hold" is ambiguous. The policy ma
   Then watch the MP4. Sim metrics can pass while the motion looks wrong.
 - **Budget:** 1,000 to 3,000 iterations at 4,096 envs, roughly 1 to 2 hours on a 3080 Ti (an estimate, not yet measured).
 
+## Bowing from a walk (v2)
+
+The first run (2026-09-26_20-56-52) passed every still-stand check, but in the
+Mac rehearsal it fell over every time it was triggered while the duck was not
+perfectly still: it had only ever practised from a dead-still stand.
+
+v2 starts half of the training episodes from **real mid-walk states**:
+
+- `scripts/make_gait_bank.py` runs the official walking policy
+  (`alpha_walking.onnx` from `pollen-robotics/microduck-policies`) inside this
+  same env with random velocity commands. It saves qpos, qvel and last action
+  from random moments of the gait to `data/polite_bow_gait_bank.pt`
+  (gitignored).
+- `bow_mdp.reset_from_gait_bank` spawns `GAIT_BANK_PROB` (0.5) of the
+  episodes from that bank, after the still-stand reset. The walker's last
+  action is handed over into the `actions` observation, as the runtime does
+  (`bow_mdp.last_action_with_handoff`).
+- Still stands now really get `STAND_JOINT_NOISE_STD` servo noise. The
+  roulade reset's `joint_noise_std` only ever applied to its mid-roll bucket.
+- There is no "settle, then bow" window. The actor has no clock, so from a
+  still stand it could not know when the wait ends. The smoothstep ramp is
+  gentle enough to absorb the stride. The published duration stays 3.5 s.
+
+```bash
+# on the GPU box, once per walking policy
+uv run python scripts/make_gait_bank.py --onnx policies/alpha_walking.onnx
+uv run train Mjlab-PoliteBow-Flat-MicroDuck --env.scene.num-envs 4096
+# judge it both ways
+uv run python scripts/bow_eval.py --onnx exports/politebow-v2.onnx --num-envs 256 --device cuda:0
+uv run python scripts/bow_eval.py --onnx exports/politebow-v2.onnx --num-envs 256 --device cuda:0 --from-walk
+```
+
+`--from-walk` must show falls close to 0%, the same as a still-stand start.
+
 ## Deploying it
 
 ```bash
