@@ -132,3 +132,22 @@ def test_play_variant_builds_and_registered():
     cfg = make_microduck_play_dead_env_cfg(play=True)
     assert cfg.episode_length_s == EPISODE_LENGTH_S
     assert load_env_cfg("Mjlab-PlayDead-Flat-MicroDuck", play=True).episode_length_s == EPISODE_LENGTH_S
+
+
+def test_gait_bank_spawn_wiring():
+    """Mid-walk starts, as for PoliteBow v2: "bang!" usually comes mid-walk."""
+    from mjlab_microduck.tasks import bow_mdp
+    from mjlab_microduck.tasks.microduck_play_dead_env_cfg import GAIT_BANK_PATH, GAIT_BANK_PROB
+
+    train = make_microduck_play_dead_env_cfg()
+    names = list(train.events.keys())
+    assert names.index("gait_bank_spawn") > names.index("set_roulade_state")
+    ev = train.events["gait_bank_spawn"]
+    assert ev.func is bow_mdp.reset_from_gait_bank and ev.mode == "reset"
+    assert ev.params["bank_path"] == GAIT_BANK_PATH
+    assert 0.0 < ev.params["prob"] == GAIT_BANK_PROB < 1.0
+    play = make_microduck_play_dead_env_cfg(play=True)
+    assert play.events["gait_bank_spawn"].params["prob"] == 0.0
+    for cfg in (train, play):
+        for group in ("actor", "critic"):
+            assert cfg.observations[group].terms["actions"].func is bow_mdp.last_action_with_handoff

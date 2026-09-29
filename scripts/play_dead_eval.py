@@ -7,6 +7,11 @@ what the rollouts actually show (AGENTS.md: measure before theorising).
     CUDA_VISIBLE_DEVICES= uv run python scripts/play_dead_eval.py --onnx output.onnx
     uv run python scripts/play_dead_eval.py --onnx output.onnx --num-envs 256 --device cuda:0
     MUJOCO_GL=egl uv run python scripts/play_dead_eval.py --onnx output.onnx --video dead.mp4 --repeats 3
+    uv run python scripts/play_dead_eval.py --onnx output.onnx --num-envs 256 --device cuda:0 --from-walk
+
+``--from-walk`` starts every episode from a recorded mid-walk state (the gait
+bank) with the walker's last action handed over: "bang!" while walking. Foot
+lifts are then only counted after the first 0.5 s (the stride finishing).
 
 Reports: episodes that ended on a side or face, head touching down too early,
 the fastest head impact, trunk pitch vs the reference over time, the final
@@ -30,6 +35,7 @@ from mjlab.tasks.registry import load_env_cfg
 from mjlab_microduck.tasks import bow_mdp, play_dead_mdp
 from mjlab_microduck.tasks.microduck_play_dead_env_cfg import (
     EPISODE_LENGTH_S,
+    GAIT_BANK_PATH,
     HEAD_YAW_DEAD,
     KEYFRAMES,
     LIE_DOWN_START,
@@ -38,6 +44,7 @@ from mjlab_microduck.tasks.microduck_play_dead_env_cfg import (
 
 TASK = "Mjlab-PlayDead-Flat-MicroDuck"
 _HEAD_YAW = 7
+WALK_SETTLE_S = 0.5  # --from-walk: foot lifts before this are the stride finishing
 
 
 def main() -> None:
@@ -48,6 +55,8 @@ def main() -> None:
     p.add_argument("--train-dr", action="store_true", help="use the training (DR) cfg, not play")
     p.add_argument("--video", default=None, help="also write an MP4 of env 0 (needs MUJOCO_GL=egl headless)")
     p.add_argument("--repeats", type=int, default=1, help="episodes to record back to back in the video")
+    p.add_argument("--from-walk", nargs="?", const=GAIT_BANK_PATH, default=None, metavar="BANK",
+                   help=f"start every episode mid-walk from a gait bank (default {GAIT_BANK_PATH})")
     args = p.parse_args()
     if args.video:
         _record(args)
@@ -56,6 +65,7 @@ def main() -> None:
 
     cfg = load_env_cfg(TASK, play=not args.train_dr)
     cfg.scene.num_envs = args.num_envs
+    _apply_from_walk(cfg, args)
     env = ManagerBasedRlEnv(cfg=cfg, device=args.device)
     sess = ort.InferenceSession(args.onnx)
     in_name = sess.get_inputs()[0].name
@@ -97,7 +107,8 @@ def main() -> None:
         if t < LIE_DOWN_START:
             early_head |= head_down & alive
             feet = (env.scene.sensors["feet_ground_contact"].data.found > 0).float().sum(-1).cpu()
-            lifted_steps += (feet < 2).float() * alive
+            if not args.from_walk or t >= WALK_SETTLE_S:
+                lifted_steps += (feet < 2).float() * alive
         pitch_log.append(torch.where(alive, pitch, torch.nan))
         ref_log.append(torch.where(alive, ref, torch.nan))
         if k == n_steps - 2:
@@ -118,7 +129,8 @@ def main() -> None:
     def med(x: torch.Tensor) -> float:
         return x[ok].median().item() if ok.any() else float("nan")
 
-    print(f"\n── PlayDead eval: {args.onnx}  ({B} envs, {'train-DR' if args.train_dr else 'play'} cfg) ──")
+    start = f"from mid-walk ({args.from_walk})" if args.from_walk else "from a still stand"
+    print(f"\n── PlayDead eval: {args.onnx}  ({B} envs, {'train-DR' if args.train_dr else 'play'} cfg, {start}) ──")
     print(f"ended on side/face  : {wrong_side.float().mean() * 100:5.1f}% of episodes (target 0)")
     print(f"dead at the end     : {on_back.float().mean() * 100:5.1f}% on its back within 20°")
     print(f"head turned         : {head_turned.float().mean() * 100:5.1f}% within 20° of {deg(HEAD_YAW_DEAD):.0f}°")
@@ -139,12 +151,18 @@ def main() -> None:
     env.close()
 
 
+def _apply_from_walk(cfg, args) -> None:
+    if args.from_walk:
+        cfg.events["gait_bank_spawn"].params.update(bank_path=args.from_walk, prob=1.0)
+
+
 def _record(args) -> None:
     """Roll out env 0 for ``--repeats`` episodes and write an MP4."""
     import mediapy
 
     cfg = load_env_cfg(TASK, play=not args.train_dr)
     cfg.scene.num_envs = 1
+    _apply_from_walk(cfg, args)
     # Three-quarter view from slightly above: the lie-down is sagittal but the
     # punchline (the head turn) is only visible from above the belly.
     cfg.viewer.distance = 0.75
