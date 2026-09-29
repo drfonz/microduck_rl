@@ -19,6 +19,8 @@ import mujoco
 import mujoco.viewer
 import onnxruntime as ort
 
+from mjlab_microduck.robot.jaw import MAX_OPEN, OPEN_ANGLE, add_jaw_hinge, jaw_qpos_adr, set_jaw_target
+
 MICRODUCK_XML = "src/mjlab_microduck/robot/microduck/scene.xml"
 # MICRODUCK_XML = "src/mjlab_microduck/robot/microduck/scene_ramps.xml"
 # MICRODUCK_XML = "src/mjlab_microduck/robot/microduck/scene_floor_objects.xml"
@@ -56,7 +58,7 @@ def load_bam_model(kp_fw: float, vin: float, max_current):
     return bam_model
 
 
-def load_mujoco_with_bam(xml_path: str, bam_model, timestep: float, vin_drop_gain, vin_min):
+def load_mujoco_with_bam(xml_path: str, bam_model, timestep: float, vin_drop_gain, vin_min, jaw: bool = False):
     """Load the scene and hand every non-passive actuator to bam.mujoco.MujocoController.
 
     Mirrors bam.mjlab.BamActuator.edit_spec (what warp does at training time):
@@ -72,6 +74,8 @@ def load_mujoco_with_bam(xml_path: str, bam_model, timestep: float, vin_drop_gai
     force_limit = bam_model.actuator.vin * kt / R
 
     spec = mujoco.MjSpec.from_file(xml_path)
+    if jaw:
+        add_jaw_hinge(spec)  # passive_jaw: no actuator, skipped below
     names = []
     for act in spec.actuators:
         tgt = act.target
@@ -1181,6 +1185,13 @@ def main():
     parser.add_argument("--kick-right", type=str, default=None, help="Path to RIGHT-foot ball kick policy ONNX (press L to trigger). Requires --new-cmd-obs. Loads a scene with a ball.")
     parser.add_argument("--roulade", type=str, default=None, help="Path to roulade (forward roll) policy ONNX (press R to trigger). Requires --new-cmd-obs.")
     parser.add_argument("--kick-duration", type=float, default=3.0, help="Seconds a kick policy stays active before handing back to standing/walking (default: 3.0)")
+    parser.add_argument("--jaw-open-at", type=float, default=None, metavar="SECONDS",
+                        help="Give the head a hinged jaw (beak), as the runtime drives it on the robot: "
+                             "it opens this many seconds after R triggers the trick and shuts when the trick "
+                             "hands back (e.g. 3.5 for play-dead). O toggles it by hand. Rehearsal only: "
+                             "the policies never drive the jaw.")
+    parser.add_argument("--jaw-angle", type=float, default=OPEN_ANGLE,
+                        help=f"How far the beak opens, rad (default {OPEN_ANGLE}, max {MAX_OPEN})")
     parser.add_argument("--roulade-duration", type=float, default=2.0, help="Seconds the roulade policy stays active before handing back to standing/walking (default: 2.0, ~the roll itself; the standing/walking policy takes over for the settle)")
     parser.add_argument("--lin-vel-x", type=float, default=0.0, help="Initial linear velocity X command (m/s)")
     parser.add_argument("--lin-vel-y", type=float, default=0.0, help="Initial linear velocity Y command (m/s)")
@@ -1279,9 +1290,14 @@ def main():
         bam_model = load_bam_model(args.kp_fw, args.vin, args.current_limit)
         vin_drop_gain = args.vin_drop_gain if args.vin_drop_gain > 0 else None
         model, data, bam_ctrl, _bam_names = load_mujoco_with_bam(
-            xml_path, bam_model, 0.005, vin_drop_gain, BAM_VIN_MIN)
+            xml_path, bam_model, 0.005, vin_drop_gain, BAM_VIN_MIN, jaw=args.jaw_open_at is not None)
     else:
-        model = mujoco.MjModel.from_xml_path(xml_path)
+        if args.jaw_open_at is not None:
+            _spec = mujoco.MjSpec.from_file(xml_path)
+            add_jaw_hinge(_spec)
+            model = _spec.compile()
+        else:
+            model = mujoco.MjModel.from_xml_path(xml_path)
         model.opt.timestep = 0.005
         data = mujoco.MjData(model)
         print("Legacy MuJoCo position actuators (--no-bam): NOT the actuator the policy was trained with")
@@ -1453,6 +1469,10 @@ def main():
     _XML_KP_NOMINAL = 0.55
     _STANDBY_KP = 2.0
 
+    # Optional beak (--jaw-open-at): driven like the robot runtime drives its jaw servo.
+    jaw_adr = jaw_qpos_adr(model) if args.jaw_open_at is not None else None
+    jaw_manual = False
+
     def set_standby_gains(on: bool):
         if bam_ctrl is not None:
             bam_ctrl.model.actuator.kp = args.kp_fw * (_STANDBY_KP / _XML_KP_NOMINAL if on else 1.0)
@@ -1488,7 +1508,7 @@ def main():
     quit_requested = False
 
     def handle_key(key):
-        nonlocal policy_enabled, quit_requested
+        nonlocal policy_enabled, quit_requested, jaw_manual
         try:
             if key == "up":
                 if policy.head_mode:
@@ -1557,6 +1577,9 @@ def main():
                 policy.trigger_behavior("kick_right")
             elif key == "r":
                 policy.trigger_behavior("roulade")
+            elif key == "o" and jaw_adr is not None:
+                jaw_manual = not jaw_manual
+                print(f"Beak: {'open' if jaw_manual else 'shut'} (by hand)")
             elif key == "q":
                 quit_requested = True
                 print("Quit requested")
@@ -1624,6 +1647,7 @@ def main():
     print("  K:                kick with LEFT foot (requires --kick-left)")
     print("  L:                kick with RIGHT foot (requires --kick-right)")
     print("  R:                roulade / forward roll (requires --roulade)")
+    print("  O:                open/shut the beak by hand (requires --jaw-open-at)")
     print(f"  P:                random push (trunk vel = {PUSH_MAX:.1f} m/s in random direction)")
     print("  Q:                quit")
     print("  [ Body pose mode — press B to toggle ]")
@@ -1678,6 +1702,11 @@ def main():
 
                 policy.update_ground_pick_phase(actual_dt)
                 policy.update_behavior(actual_dt)
+                if jaw_adr is not None:
+                    trick = policy.behavior_mode
+                    since = policy.behavior_durations.get(trick, 0.0) - policy.behavior_time_left if trick else 0.0
+                    jaw_open = jaw_manual or (trick == "roulade" and since >= args.jaw_open_at)
+                    set_jaw_target(model, jaw_adr, args.jaw_angle if jaw_open else 0.0)
 
                 if policy_enabled:
                     action = policy.infer()
