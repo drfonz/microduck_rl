@@ -79,6 +79,10 @@ from .microduck_polite_bow_env_cfg import (
     make_microduck_polite_bow_env_cfg,
     MicroduckPoliteBowRlCfg,
 )
+from .microduck_play_dead_env_cfg import (
+    make_microduck_play_dead_env_cfg,
+    MicroduckPlayDeadRlCfg,
+)
 from .backlash import make_backlash_variant
 
 # Standard velocity task
@@ -244,6 +248,17 @@ register_mjlab_task(
     env_cfg=make_microduck_polite_bow_env_cfg(),
     play_env_cfg=make_microduck_polite_bow_env_cfg(play=True),
     rl_cfg=MicroduckPoliteBowRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# PlayDead: stand, sit, lie belly-up with legs in the air, head to the side.
+# Constant-command (publishable as --kind episodic --duration-s 5.0). Ends lying
+# down: the next policy must be able to get up from the back.
+register_mjlab_task(
+    task_id="Mjlab-PlayDead-Flat-MicroDuck",
+    env_cfg=make_microduck_play_dead_env_cfg(),
+    play_env_cfg=make_microduck_play_dead_env_cfg(play=True),
+    rl_cfg=MicroduckPlayDeadRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 
