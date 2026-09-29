@@ -32,6 +32,7 @@ import math
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers import (
     CurriculumTermCfg,
+    EventTermCfg,
     ObservationTermCfg,
     RewardTermCfg,
     TerminationTermCfg,
@@ -81,6 +82,15 @@ BOW_DELTA: dict[int, float] = {
     6: 0.30,  # head_pitch  (look down)
 }
 
+# Walk→bow hand-off (see bow_mdp.reset_from_gait_bank). The bank is recorded
+# on the GPU box by scripts/make_gait_bank.py from the official walking policy;
+# data/ is gitignored. Training episodes start from a real mid-walk state with
+# this probability, the rest from a still stand. Play/eval default to still
+# stands; bow_eval.py --from-walk evaluates the hand-off explicitly.
+GAIT_BANK_PATH = "data/polite_bow_gait_bank.pt"
+GAIT_BANK_PROB = 0.5
+STAND_JOINT_NOISE_STD = 0.03  # rad, servo noise on still-stand spawns
+
 _LEG_JOINTS = [0, 1, 2, 3, 4, 9, 10, 11, 12, 13]
 _NECK_JOINTS = [5, 6, 7, 8]
 
@@ -105,7 +115,22 @@ def make_microduck_polite_bow_env_cfg(play: bool = False) -> ManagerBasedRlEnvCf
     spawn["midroll_prob"] = 0.0
     spawn["forward_vel_range"] = (0.0, 0.0)
     spawn["standing_tilt_max"] = math.radians(3.0)
-    spawn["joint_noise_std"] = 0.03
+    spawn["joint_noise_std"] = 0.03  # NB: roulade applies this to mid-roll spawns only
+    # Mid-walk spawns + real servo noise on still stands. Must run AFTER
+    # set_roulade_state (event dicts apply in insertion order).
+    cfg.events["gait_bank_spawn"] = EventTermCfg(
+        func=bow_mdp.reset_from_gait_bank,
+        mode="reset",
+        params={
+            "bank_path": GAIT_BANK_PATH,
+            "prob": 0.0 if play else GAIT_BANK_PROB,
+            "stand_joint_noise_std": STAND_JOINT_NOISE_STD,
+        },
+    )
+    # The runtime keeps the previous policy's last action in the observation
+    # at a hand-off; mirror that for the walk spawns (actor AND critic).
+    for group in ("actor", "critic"):
+        cfg.observations[group].terms["actions"].func = bow_mdp.last_action_with_handoff
 
     # ── Task rewards ────────────────────────────────────────────────────────
     common = {"profile": BOW_PROFILE, "bow_delta": BOW_DELTA}
