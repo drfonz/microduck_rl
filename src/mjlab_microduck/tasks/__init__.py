@@ -83,6 +83,10 @@ from .microduck_play_dead_env_cfg import (
     make_microduck_play_dead_env_cfg,
     MicroduckPlayDeadRlCfg,
 )
+from .microduck_sleepy_duck_env_cfg import (
+    make_microduck_sleepy_duck_env_cfg,
+    MicroduckSleepyDuckRlCfg,
+)
 from .backlash import make_backlash_variant
 
 # Standard velocity task
@@ -259,6 +263,18 @@ register_mjlab_task(
     env_cfg=make_microduck_play_dead_env_cfg(),
     play_env_cfg=make_microduck_play_dead_env_cfg(play=True),
     rl_cfg=MicroduckPlayDeadRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Sleepy Duckling: yawn, sit, three nods (each deeper, a jerk as it catches
+# itself), slump asleep onto its beak, snuggle onto its cheek. Constant-command
+# (publishable as --kind episodic --duration-s 10.5). Ends asleep in a static
+# pose, so the runtime may keep it running while the duck sleeps.
+register_mjlab_task(
+    task_id="Mjlab-SleepyDuck-Flat-MicroDuck",
+    env_cfg=make_microduck_sleepy_duck_env_cfg(),
+    play_env_cfg=make_microduck_sleepy_duck_env_cfg(play=True),
+    rl_cfg=MicroduckSleepyDuckRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 
