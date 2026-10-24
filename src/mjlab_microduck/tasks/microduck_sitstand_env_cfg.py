@@ -144,6 +144,24 @@ POSTURE_RAMP_S = 2.0
 MAX_DESCENT_SPEED = 0.05
 MAX_RISE_SPEED    = 0.08
 
+# ── Seated fall-back hardening (2026-10) ──────────────────────────────────────
+# Real robot: an abrupt head move while seated tips it BACKWARD; it stays
+# leaned ~30° in the sit pose and the neck servo overloads. Sim battery
+# (claude_experiments/sitstand_head_bench.py, r78hyhck@1250): fast head
+# wiggles / pitch-down+yaw jumps tip 30-45% of seated robots, none recover,
+# neck |τ| 0.13-0.19 Nm vs 0.02 calm. A backward kick of |ω| ≈ 3 rad/s leaves
+# 69% stuck leaned (claude_experiments/sitstand_tip_probe.py), ≥ 4 rad/s
+# flops to ~65° on the back. Training had neither fast head commands (the
+# head command only resamples every few s) nor any leaned-back seated state.
+#  - seated_head_jerk: abrupt head-command jumps / sign flips while seated.
+#  - seated_tip: backward pitch kicks while seated → recovery frontier.
+#  - neck_strain_leaned: neck torque cost while leaned BACK in the sit.
+# Both events are introduced by curriculum only once the sit exists (the
+# push-ramp lesson: perturbing an unconsolidated transition unlearns it).
+ENABLE_SEATED_FALLBACK_HARDENING = True
+SEATED_HEAD_JERK_INTERVAL_S = (0.3, 0.8)
+SEATED_TIP_INTERVAL_S       = (3.0, 6.0)
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -455,6 +473,22 @@ def make_microduck_sitstand_env_cfg(
     cfg.rewards["angular_momentum"].weight = -0.02  # velocity value
     cfg.rewards.pop("soft_landing", None)           # velocity removes it
 
+    # Neck strain while leaned BACK in the sit (the overload symptom). Cost
+    # function (≥ 0) → negative weight. ≈ -1.1/step at overload torque
+    # (0.15 Nm → (0.15/0.1)² = 2.25), zero when upright / standing / rising /
+    # leaning forward, so it never taxes sit or rise discovery → on from 0.
+    if ENABLE_SEATED_FALLBACK_HARDENING:
+        cfg.rewards["neck_strain_leaned"] = RewardTermCfg(
+            func=microduck_mdp.neck_torque_when_tilted,
+            weight=-0.5,
+            params={
+                "command_name":   "twist",
+                "tilt_start_deg": 12.0,
+                "tilt_full_deg":  25.0,
+                "torque_scale":   0.1,
+            },
+        )
+
     cfg.rewards["self_collisions"] = RewardTermCfg(
         func=mdp.self_collision_cost,
         weight=-1.0,
@@ -656,6 +690,26 @@ def make_microduck_sitstand_env_cfg(
                     "y": VELOCITY_PUSH_RANGE,
                 },
                 "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+
+    if ENABLE_SEATED_FALLBACK_HARDENING:
+        # Both start disabled (prob 0 / zero kick) and are ramped by the
+        # seated_head_jerk_prob / seated_tip_range curricula below.
+        cfg.events["seated_head_jerk"] = EventTermCfg(
+            func=microduck_mdp.seated_head_command_jerk,
+            mode="interval",
+            interval_range_s=SEATED_HEAD_JERK_INTERVAL_S,
+            params={"prob": 0.0, "flip_frac": 0.5},
+        )
+        cfg.events["seated_tip"] = EventTermCfg(
+            func=microduck_mdp.seated_backward_tip,
+            mode="interval",
+            interval_range_s=SEATED_TIP_INTERVAL_S,
+            params={
+                "ang_vel_range": (0.0, 0.0),
+                "prob":          0.5,
+                "lateral_frac":  0.3,
             },
         )
 
@@ -870,6 +924,37 @@ def make_microduck_sitstand_env_cfg(
             ],
         },
     )
+
+    # Seated fall-back hardening ramps — after the sit/rise exist (the
+    # sitstand recipe has both by ~1250) and alongside the head range
+    # reaching its full width (2000). Tip kicks ramp from "mostly catchable"
+    # (≤ 3 rad/s) to "flops onto the back" (4 rad/s) so the policy learns
+    # the catch first, then the recovery. If a seated metric steps DOWN at
+    # these boundaries, stretch them — never earlier.
+    if ENABLE_SEATED_FALLBACK_HARDENING:
+        cfg.curriculum["seated_head_jerk_prob"] = CurriculumTermCfg(
+            func=microduck_mdp.event_param_curriculum,
+            params={
+                "event_name": "seated_head_jerk",
+                "param_stages": [
+                    {"step": 0,         "params": {"prob": 0.0}},
+                    {"step": 1500 * 24, "params": {"prob": 0.2}},
+                    {"step": 2000 * 24, "params": {"prob": 0.4}},
+                ],
+            },
+        )
+        cfg.curriculum["seated_tip_range"] = CurriculumTermCfg(
+            func=microduck_mdp.event_param_curriculum,
+            params={
+                "event_name": "seated_tip",
+                "param_stages": [
+                    {"step": 0,         "params": {"ang_vel_range": (0.0, 0.0)}},
+                    {"step": 1500 * 24, "params": {"ang_vel_range": (1.0, 2.5)}},
+                    {"step": 2000 * 24, "params": {"ang_vel_range": (1.5, 3.25)}},
+                    {"step": 2500 * 24, "params": {"ang_vel_range": (2.0, 4.0)}},
+                ],
+            },
+        )
 
     # Torque-rate anti-jitter — phased in once both transition motions exist.
     cfg.curriculum["torque_rate_weight"] = CurriculumTermCfg(
