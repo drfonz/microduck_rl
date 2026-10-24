@@ -68,7 +68,12 @@ def bow_blend_at(
 
 
 def _episode_time(env: ManagerBasedRlEnv) -> torch.Tensor:
-    return env.episode_length_buf.to(torch.float32) * env.step_dt
+    t = env.episode_length_buf.to(torch.float32) * env.step_dt
+    # Tasks that start some episodes partway through their routine (a reverse
+    # curriculum, e.g. SleepyDuck) keep a per-env clock offset here: mjlab
+    # zeroes episode_length_buf AFTER the reset events, so they cannot set it.
+    offset = env.__dict__.get("_clock_offset_s")
+    return t if offset is None else t + offset
 
 
 def bow_blend(env: ManagerBasedRlEnv, profile: dict) -> torch.Tensor:

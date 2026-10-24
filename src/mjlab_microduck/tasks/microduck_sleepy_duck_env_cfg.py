@@ -82,25 +82,29 @@ def _head(neck: float, head: float, yaw: float = 0.0, roll: float = 0.0) -> dict
 # more: neck +0.55 / head −0.45 tips even the sitting duck onto its back.
 YAWN_HEAD = _head(0.45, -0.2)
 # Three nods. Each droops deeper (nose down 23°, 43°, 63°) and each catch
-# recovers less (9°, 21°, 40°), and the neck only ever goes further forward,
-# so the actor (which has no clock) can tell from its own pose which nod it is
-# in. The droops are slow; the catches are the jerks (0.2 s).
-NOD_1 = _head(0.3491, 0.75)
-CATCH_1 = _head(0.3491, 0.5)
-NOD_2 = _head(0.25, 1.0)
-CATCH_2 = _head(0.28, 0.65)
-NOD_3 = _head(0.1, 1.2)
-CATCH_3 = _head(0.15, 0.85)
-# Asleep on its beak: the body slumps forward (trunk ≈ 60°, bum highest) and
-# the beak (the orange jaw under the head) lands on the floor.
-BEAK_DOWN_HEAD = _head(-0.9, -0.9)
-BEAK_DOWN_PITCH = math.radians(60.0)  # settled at 56–62° in the pose study
+# recovers less (9°, 21°, 40°); the droops are slow, the catches are the jerks
+# (0.2 s). The actor has no clock, and run 1 showed that depth alone does not
+# tell the nods apart: it averaged them into one slow droop. So each nod also
+# turns the head a little further towards its sleeping side (yaw 9°, 17°,
+# 26°, roll 7°, 14°, 21°) and the catches keep that turn: a posture "counter"
+# the actor can read. The snuggle then finishes the turn.
+NOD_1 = _head(0.3491, 0.75, 0.15, 0.12)
+CATCH_1 = _head(0.3491, 0.5, 0.15, 0.12)
+NOD_2 = _head(0.25, 1.0, 0.30, 0.24)
+CATCH_2 = _head(0.28, 0.65, 0.30, 0.24)
+NOD_3 = _head(0.1, 1.2, 0.45, 0.36)
+CATCH_3 = _head(0.15, 0.85, 0.45, 0.36)
+# Asleep on its beak: the body slumps forward (trunk ≈ 63°, bum highest) and
+# the beak (the orange jaw under the head) lands on the floor, the head still
+# turned as after nod 3 (pose study "beak_turn_a": 64°, beak and feet down).
+BEAK_DOWN_HEAD = _head(-0.9, -0.9, 0.45, 0.36)
+BEAK_DOWN_PITCH = math.radians(63.0)
 # Snuggled: head_yaw rolls the head onto its cheek, face turned to the left,
 # the way an animal settles to sleep. Settles flat on the cheek in sim (pose
 # study "side_5").
 HEAD_YAW_SNUGGLE = 1.4
 SNUGGLE_HEAD = _head(-0.9, -0.4, HEAD_YAW_SNUGGLE)
-SNUGGLE_PITCH = math.radians(58.0)  # settled at 55–60°
+SNUGGLE_PITCH = math.radians(60.0)  # settled at 60–61° in the pose study
 
 ASLEEP_BEAK_POSE: dict[int, float] = {**SIT_POSE, **BEAK_DOWN_HEAD}
 ASLEEP_POSE: dict[int, float] = {**SIT_POSE, **SNUGGLE_HEAD}
@@ -131,18 +135,39 @@ SLUMP_START = KEYFRAMES[9]["t"]  # 5.9 s: the final droop begins
 HEAD_DOWN_ALLOWED = 7.0
 BEAK_LANDED = KEYFRAMES[10]["t"]  # 7.6 s: resting the head on the floor pays from here
 
+
+def _kf(t: float) -> dict:
+    return next(k for k in KEYFRAMES if k["t"] == t)
+
+
+# Mid-routine starts (see MID_ROUTINE_PROB below): keyframe, settled trunk
+# pitch and height (pose study, 25 Oct 2026), and how often to pick it.
+SPAWN_STATES: list[dict] = [
+    {"t": 2.3, "pose": _kf(2.3)["pose"], "pitch": math.radians(-0.5), "z": 0.0609, "weight": 1.0},  # just sat
+    {"t": 4.5, "pose": _kf(4.5)["pose"], "pitch": math.radians(2.1), "z": 0.0611, "weight": 1.0},   # after nod 2
+    {"t": 5.9, "pose": _kf(5.9)["pose"], "pitch": math.radians(5.2), "z": 0.0608, "weight": 2.0},   # slump starts
+    {"t": 7.6, "pose": _kf(7.6)["pose"], "pitch": math.radians(63.3), "z": 0.0658, "weight": 2.0},  # on its beak
+]
+
 # "Sleepy time" can come mid-walk. As for PoliteBow v2 and PlayDead, a share
 # of the training episodes start from a real mid-walk state (with the
 # walker's last action handed over). Same bank: same base env and robot model.
 # It is recorded on the GPU box by scripts/make_gait_bank.py; data/ is
 # gitignored.
 GAIT_BANK_PATH = "data/polite_bow_gait_bank.pt"
-GAIT_BANK_PROB = 0.4
+GAIT_BANK_PROB = 0.3
 STAND_JOINT_NOISE_STD = 0.03  # rad, servo noise on still-stand spawns
 
 _LEG_JOINTS = [0, 1, 2, 3, 4, 9, 10, 11, 12, 13]
 _HEAD_PITCH_JOINTS = [5, 6]  # neck_pitch, head_pitch: the yawn and the nods
-_HEAD_TURN_JOINTS = [7, 8]  # head_yaw, head_roll: straight, then the snuggle
+_HEAD_TURN_JOINTS = [7, 8]  # head_yaw, head_roll: the nod counter, then the snuggle
+
+# Reverse curriculum (run 2): a share of the episodes start mid-routine, at
+# rest in a keyframe pose, with the episode clock set to that keyframe. Run 1
+# never slumped by iteration 500: the slump and the snuggle got no practice.
+# Trunk pitch and height are where each pose settles (scripts/sleepy_pose_study.py,
+# candidates kf_*s). Weighted towards the slump, the hardest part.
+MID_ROUTINE_PROB = 0.3
 
 
 def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -175,6 +200,13 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
             "prob": 0.0 if play else GAIT_BANK_PROB,
             "stand_joint_noise_std": STAND_JOINT_NOISE_STD,
         },
+    )
+    # Mid-routine starts (reverse curriculum). LAST reset event: it overrides
+    # whatever the stand/walk spawns chose for the envs it picks.
+    cfg.events["mid_routine_spawn"] = EventTermCfg(
+        func=sleepy_duck_mdp.reset_mid_routine,
+        mode="reset",
+        params={"prob": 0.0 if play else MID_ROUTINE_PROB, "states": SPAWN_STATES},
     )
     # The runtime keeps the previous policy's last action in the observation
     # at a hand-off; mirror that for the walk spawns (actor AND critic).
@@ -212,17 +244,19 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
         weight=-0.5,
         params={**kf, "joint_indices": _LEG_JOINTS},
     )
-    # The snuggle: head straight all along, then onto its cheek. Its own term
-    # because it is the punchline. PlayDead's head turn learnt with std 0.3
-    # but late (~1,600 iters); 0.4 plus an L1 pull should find it sooner.
-    cfg.rewards["sleepy_snuggle"] = RewardTermCfg(
+    # The head turn: a little more with each nod (the counter that tells the
+    # nods apart), then the snuggle onto the cheek, the punchline. std 0.25 so
+    # a 0.15 rad step between nods is clearly worth taking; the L1 pull gives
+    # a gradient towards the snuggle's 1.4 rad from far away (PlayDead's head
+    # turn, Gaussian only at std 0.3, took ~1,600 iterations).
+    cfg.rewards["sleepy_head_turn"] = RewardTermCfg(
         func=play_dead_mdp.pose_track,
         weight=2.0,
-        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.4},
+        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.25},
     )
-    cfg.rewards["sleepy_snuggle_l1_cost"] = RewardTermCfg(
+    cfg.rewards["sleepy_head_turn_l1_cost"] = RewardTermCfg(
         func=play_dead_mdp.pose_l1_cost,
-        weight=-0.3,
+        weight=-0.5,
         params={**kf, "joint_indices": _HEAD_TURN_JOINTS},
     )
     # Both feet stay down the whole time: it sits and sleeps where it stands.
@@ -269,6 +303,10 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # onto the back, onto a side, or on over the face ends the episode.
     cfg.terminations.pop("fell_over", None)
     cfg.terminations["tipped_over"] = TerminationTermCfg(func=sleepy_duck_mdp.tipped_over)
+    # Episodes that start mid-routine end when the routine does.
+    cfg.terminations["clock_out"] = TerminationTermCfg(
+        func=sleepy_duck_mdp.clock_out, params={"t_end": EPISODE_LENGTH_S}, time_out=True
+    )
 
     # ── Critic-only privileged clock ─────────────────────────────────────────
     cfg.observations["critic"].terms["sleepy_clock"] = ObservationTermCfg(

@@ -47,6 +47,7 @@ from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import (
 TASK = "Mjlab-SleepyDuck-Flat-MicroDuck"
 _NECK, _HEAD_PITCH, _HEAD_YAW = 5, 6, 7
 WALK_SETTLE_S = 0.5  # --from-walk: foot lifts before this are the stride finishing
+VIDEO_AZIMUTH = 215.0  # with the duck facing +x: front-left, the side its face turns to (checked)
 NODS_FROM = 2.3  # s: seated, the nodding starts
 NOD_PROMINENCE = 0.12  # rad: a droop-and-catch smaller than this is not a nod
 
@@ -118,7 +119,7 @@ def main() -> None:
     early_head = torch.zeros(B, dtype=torch.bool)
     head_impact = torch.zeros(B)
     lifted_steps = torch.zeros(B)
-    pitch_log, ref_log, nose_log, nose_ref_log = [], [], [], []
+    pitch_log, ref_log, nose_log, nose_ref_log, yaw_log = [], [], [], [], []
     start_xy = None
 
     for k in range(n_steps):
@@ -152,6 +153,7 @@ def main() -> None:
         ref_log.append(torch.where(alive, ref, nan))
         nose_log.append(torch.where(alive, nose_down(q), nan))
         nose_ref_log.append(nose_down(q_ref))
+        yaw_log.append(torch.where(alive, q[:, _HEAD_YAW], nan))
         if k == n_steps - 2:
             g = robot.data.projected_gravity_b.cpu()
             final_pitch = pitch.clone()
@@ -163,6 +165,7 @@ def main() -> None:
             drift = (xy - start_xy).norm(dim=-1) * 1000
 
     P, R = torch.stack(pitch_log), torch.stack(ref_log)  # (T, B)
+    Y = torch.stack(yaw_log)
     N, NR = torch.stack(nose_log), torch.stack(nose_ref_log)
     deg = math.degrees
     ok = final_alive
@@ -180,6 +183,10 @@ def main() -> None:
         counts.append(n)
         catches.append(fastest / env.step_dt)
     ref_nods, ref_catch = count_nods(NR[k0:k1, 0].numpy())
+    # The head-turn counter at each nod's droop (run 2): how far the head has
+    # turned towards its sleeping side, against the keyframe.
+    droops = [k for k in KEYFRAMES if NODS_FROM < k["t"] <= SLUMP_START][0::2]
+    turn_at = [(k["pose"][_HEAD_YAW], torch.nanmedian(Y[int(round(k["t"] / env.step_dt)) - 1]).item()) for k in droops]
     counts_arr = np.array(counts) if counts else np.array([0])
 
     def med(x: torch.Tensor) -> float:
@@ -193,6 +200,8 @@ def main() -> None:
     print(f"snuggled            : {snuggled.float().mean() * 100:5.1f}% head yaw within 20° of {deg(HEAD_YAW_SNUGGLE):.0f}°")
     print(f"nods                : {np.median(counts_arr):.0f} median (target {ref_nods}); exactly {ref_nods} in "
           f"{(counts_arr == ref_nods).mean() * 100:.0f}%, histogram {np.bincount(counts_arr).tolist()}")
+    print("head turn at nods   : " + ", ".join(f"{deg(got):.0f}°" for _, got in turn_at)
+          + "   (target " + ", ".join(f"{deg(want):.0f}°" for want, _ in turn_at) + ")")
     print(f"jerk (catch) speed  : {np.median(catches) if catches else float('nan'):5.2f} rad/s median "
           f"(reference {ref_catch / env.step_dt:.2f})")
     print(f"head down too early : {early_head.float().mean() * 100:5.1f}% (before {HEAD_DOWN_ALLOWED:.1f} s)")
@@ -226,10 +235,11 @@ def _record(args) -> None:
     cfg.scene.num_envs = 1
     _apply_from_walk(cfg, args)
     # Front-left three-quarter view: the snuggle turns the face to the duck's
-    # left, so this is the side where you see it asleep.
+    # left, so this is the side where you see it asleep. Resets give the duck a
+    # random heading, so each episode is turned to face the camera (_face_x).
     cfg.viewer.distance = 0.6
     cfg.viewer.elevation = -15.0
-    cfg.viewer.azimuth = 215.0
+    cfg.viewer.azimuth = VIDEO_AZIMUTH
     cfg.viewer.width, cfg.viewer.height = 640, 480
     env = ManagerBasedRlEnv(cfg=cfg, device=args.device, render_mode="rgb_array")
     sess = ort.InferenceSession(args.onnx)
@@ -238,6 +248,7 @@ def _record(args) -> None:
     obs, _ = env.reset()
     n_steps = int(round(EPISODE_LENGTH_S / env.step_dt))
     for _ in range(args.repeats):
+        _face_x(env)
         for _ in range(n_steps):
             actor = obs["actor"].detach().cpu().numpy().astype(np.float32)
             act = sess.run(None, {in_name: actor})[0]
@@ -248,6 +259,18 @@ def _record(args) -> None:
     env.close()
     mediapy.write_video(args.video, frames, fps=round(1.0 / env.step_dt))
     print(f"wrote {args.video} ({len(frames)} frames)")
+
+
+def _face_x(env: ManagerBasedRlEnv) -> None:
+    """Turn env 0's duck to face +x, keeping its tilt: the camera's front."""
+    q = env.sim.data.qpos[0, 3:7]
+    w, x, y, z = q.tolist()
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    c, s = math.cos(-yaw / 2), math.sin(-yaw / 2)  # q_unyaw = (c, 0, 0, s)
+    env.sim.data.qpos[0, 3:7] = torch.tensor(
+        [c * w - s * z, c * x - s * y, c * y + s * x, c * z + s * w], device=env.device
+    )
+    env.sim.forward()
 
 
 if __name__ == "__main__":

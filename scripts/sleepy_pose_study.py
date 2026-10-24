@@ -133,6 +133,28 @@ CANDIDATES: dict[str, tuple[np.ndarray, float]] = {
     "side_4": (pose(SIT_LEGS, head(-0.6, 0.0, 1.4)), 0.3),
     "side_5": (pose(SIT_LEGS, head(-0.9, -0.4, 1.4)), 0.3),
     "side_6": (pose(SIT_LEGS, head(-0.7, -0.9, 1.4, 0.3)), 0.3),
+    # Run 1 averaged the three nods (the actor can't tell them apart without a
+    # clock). A posture "counter": the head lolls further to one side with each
+    # nod. Both signs, to pick the one that leads into the snuggle.
+    "tilt+_nod1": (pose(SIT_LEGS, head(0.3491, 0.75, 0.0, 0.12)), 0.0),
+    "tilt+_nod2": (pose(SIT_LEGS, head(0.25, 1.0, 0.0, 0.24)), 0.0),
+    "tilt+_nod3": (pose(SIT_LEGS, head(0.1, 1.2, 0.0, 0.36)), 0.0),
+    "tilt-_nod1": (pose(SIT_LEGS, head(0.3491, 0.75, 0.0, -0.12)), 0.0),
+    "tilt-_nod2": (pose(SIT_LEGS, head(0.25, 1.0, 0.0, -0.24)), 0.0),
+    "tilt-_nod3": (pose(SIT_LEGS, head(0.1, 1.2, 0.0, -0.36)), 0.0),
+    # Stronger counter: the head also turns towards its sleeping side (the
+    # snuggle's +yaw) a little more with each nod; the snuggle finishes it.
+    "turn+_nod1": (pose(SIT_LEGS, head(0.3491, 0.75, 0.15, 0.12)), 0.0),
+    "turn+_nod2": (pose(SIT_LEGS, head(0.25, 1.0, 0.30, 0.24)), 0.0),
+    "turn+_nod3": (pose(SIT_LEGS, head(0.1, 1.2, 0.45, 0.36)), 0.0),
+    "turn-_nod1": (pose(SIT_LEGS, head(0.3491, 0.75, 0.15, -0.12)), 0.0),
+    "turn-_nod2": (pose(SIT_LEGS, head(0.25, 1.0, 0.30, -0.24)), 0.0),
+    "turn-_nod3": (pose(SIT_LEGS, head(0.1, 1.2, 0.45, -0.36)), 0.0),
+    # Beak-down with the head already partly turned (it arrives from nod 3 at
+    # yaw 0.45, roll 0.36): does the slumped pose still rest on the beak?
+    "beak_turn_a": (pose(SIT_LEGS, head(-0.9, -0.9, 0.45, 0.36)), 1.0),
+    "beak_turn_b": (pose(SIT_LEGS, head(-0.9, -0.9, 0.45, 0.2)), 1.0),
+    "beak_turn_c": (pose(SIT_LEGS, head(-0.9, -0.9, 0.45, 0.0)), 1.0),
     # The standing pose held open-loop: it falls without a policy balancing it.
     "home_unbalanced": (pose(), 0.0),
     # Standing yawn: head back, nose up. Only rendered (a stand needs a policy).
@@ -316,7 +338,7 @@ def main() -> None:
 
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
-    print(f"{'pose':<16}{'pitch°':>8}{'roll°':>7}{'feet':>5}{'head':>5}{'head z':>8}{'bum z':>7}"
+    print(f"{'pose':<16}{'pitch°':>8}{'roll°':>7}{'feet':>5}{'head':>5}{'head z':>8}{'bum z':>7}{'trunk z':>8}"
           f"{'drift':>7}{'speed':>7}{'max err':>8}  touching the floor")
     front, side = [], []
     for b, name in enumerate(names):
@@ -338,6 +360,7 @@ def main() -> None:
             bum_z = trunk_pos[b, 2].item() - 0.04 * (2 * (x * z - w * y))
             print(f"{name:<16}{math.degrees(pitch[b]):8.1f}{math.degrees(roll[b]):7.1f}{int(feet_n[b]):5d}"
                   f"{'yes' if beak[b] else '-':>5}{jaw_z[b] * 100:7.1f}c{bum_z * 100:6.1f}c"
+                  f"{(trunk_pos[b, 2] - env.scene.env_origins[b, 2]).item() * 100:7.2f}c"
                   f"{drift[b] * 100:6.1f}c{speed[b]:7.3f}{joint_err[b]:8.2f}  {', '.join(floor_parts(model, data))}")
         if args.out:
             caption = captions.get(name, name)

@@ -26,7 +26,7 @@ from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import (
 _COSTS = {
     "sleepy_head_l1_cost",
     "sleepy_legs_l1_cost",
-    "sleepy_snuggle_l1_cost",
+    "sleepy_head_turn_l1_cost",
     "sleepy_drift_cost",
     "sleepy_roll_cost",
     "sleepy_early_head_contact_cost",
@@ -36,7 +36,7 @@ _REWARDS = {
     "sleepy_head",
     "sleepy_pitch",
     "sleepy_legs",
-    "sleepy_snuggle",
+    "sleepy_head_turn",
     "feet_planted",
     "sleepy_head_resting",
 }
@@ -102,10 +102,13 @@ def test_keyframes_in_order_and_end_asleep():
     assert KEYFRAMES[0]["pose"] == {} and KEYFRAMES[0]["pitch"] == 0.0
     assert KEYFRAMES[-1]["pose"] == ASLEEP_POSE
     assert ASLEEP_POSE[_HEAD_YAW] == HEAD_YAW_SNUGGLE
-    # The head turns only after the beak has landed (the snuggle).
+    # The head only ever turns further towards its sleeping side (the nod
+    # counter, then the snuggle), and the big turn comes after the landing.
+    yaws = [k["pose"].get(_HEAD_YAW, 0.0) for k in KEYFRAMES]
+    assert yaws == sorted(yaws)
     for k in KEYFRAMES:
         if k["t"] <= BEAK_LANDED:
-            assert k["pose"].get(_HEAD_YAW, 0.0) == 0.0, k
+            assert k["pose"].get(_HEAD_YAW, 0.0) <= 0.5, k
     # Still holds stay short: the actor cannot see a clock.
     for a, b in zip(KEYFRAMES, KEYFRAMES[1:]):
         if a["pose"] == b["pose"] and a["pitch"] == b["pitch"] and b is not KEYFRAMES[-1]:
@@ -124,6 +127,16 @@ def test_nods_get_deeper_and_the_catches_weaker():
     assert all(ci < di for ci, di in zip(c, d))  # each catch lifts the head
     necks = [p[_NECK] for p in nods]
     assert all(b <= a + 0.05 for a, b in zip(necks, necks[1:]))  # neck only creeps forward
+
+
+def test_each_nod_has_its_own_head_turn():
+    """Run 1 averaged the nods: depth alone did not tell them apart. Each nod
+    now turns the head further (a posture counter); a catch keeps its turn."""
+    nods = [k["pose"] for k in KEYFRAMES if 2.3 < k["t"] <= SLUMP_START]
+    turns = [p[_HEAD_YAW] for p in nods[0::2]]
+    assert turns == sorted(turns) and min(b - a for a, b in zip([0.0] + turns, turns)) >= 0.1
+    for droop, catch in zip(nods[0::2], nods[1::2]):
+        assert catch[_HEAD_YAW] == droop[_HEAD_YAW] and catch[8] == droop[8]
 
 
 def test_yawn_is_nose_up_but_not_too_far_back():
@@ -163,6 +176,44 @@ def test_phase_gates():
 def test_symmetry_off_for_one_sided_snuggle():
     assert HEAD_YAW_SNUGGLE != 0.0
     assert MicroduckSleepyDuckRlCfg.algorithm.symmetry_cfg is None
+
+
+def test_mid_routine_spawns_match_the_keyframes():
+    from mjlab_microduck.tasks import sleepy_duck_mdp
+    from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import MID_ROUTINE_PROB, SPAWN_STATES
+
+    by_t = {k["t"]: k for k in KEYFRAMES}
+    assert SPAWN_STATES and 0.0 < MID_ROUTINE_PROB < 0.5
+    for st in SPAWN_STATES:
+        assert st["t"] in by_t and st["pose"] == by_t[st["t"]]["pose"], st["t"]
+        assert abs(st["pitch"] - by_t[st["t"]]["pitch"]) < math.radians(8.0)  # settles near the reference
+        assert 0.05 < st["z"] < 0.08 and st["weight"] > 0.0
+    # The slump gets practice: some spawns start at or after it.
+    assert any(st["t"] >= SLUMP_START for st in SPAWN_STATES)
+    train = make_microduck_sleepy_duck_env_cfg()
+    names = list(train.events.keys())
+    assert names[-1] == "mid_routine_spawn"  # last reset event: overrides stand/walk spawns
+    ev = train.events["mid_routine_spawn"]
+    assert ev.func is sleepy_duck_mdp.reset_mid_routine and ev.params["prob"] == MID_ROUTINE_PROB
+    assert make_microduck_sleepy_duck_env_cfg(play=True).events["mid_routine_spawn"].params["prob"] == 0.0
+
+
+def test_mid_routine_episodes_end_with_the_routine():
+    term = make_microduck_sleepy_duck_env_cfg().terminations["clock_out"]
+    assert term.time_out and term.params["t_end"] == EPISODE_LENGTH_S
+
+
+def test_clock_offset_shifts_the_episode_clock():
+    """bow_mdp._episode_time adds the per-env offset when one exists, and is
+    unchanged for tasks that never set it (PoliteBow, PlayDead)."""
+    from types import SimpleNamespace
+
+    from mjlab_microduck.tasks import bow_mdp
+
+    env = SimpleNamespace(episode_length_buf=torch.tensor([10, 10]), step_dt=0.02)
+    assert torch.allclose(bow_mdp._episode_time(env), torch.tensor([0.2, 0.2]))
+    env._clock_offset_s = torch.tensor([0.0, 7.6])
+    assert torch.allclose(bow_mdp._episode_time(env), torch.tensor([0.2, 7.8]))
 
 
 def test_dense_checkpoints():
