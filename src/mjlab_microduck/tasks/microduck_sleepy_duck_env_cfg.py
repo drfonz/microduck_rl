@@ -83,7 +83,9 @@ def _head(neck: float, head: float, yaw: float = 0.0, roll: float = 0.0) -> dict
 YAWN_HEAD = _head(0.45, -0.2)
 # Three nods. Each droops deeper (nose down 23°, 43°, 63°) and each catch
 # recovers less (9°, 21°, 40°); the droops are slow, the catches are the jerks
-# (0.2 s). The actor has no clock, and run 1 showed that depth alone does not
+# (0.3 s: run 2's 0.2 s jerks were never attempted; a clockless actor has to
+# time them from its own pose, and a wider feature forgives small timing
+# errors). The actor has no clock, and run 1 showed that depth alone does not
 # tell the nods apart: it averaged them into one slow droop. So each nod also
 # turns the head a little further towards its sleeping side (yaw 9°, 17°,
 # 26°, roll 7°, 14°, 21°) and the catches keep that turn: a posture "counter"
@@ -118,22 +120,22 @@ KEYFRAMES: list[dict] = [
     {"t": 1.0, "pose": YAWN_HEAD, "pitch": 0.0},                  # ...hold the yawn
     {"t": 2.3, "pose": SIT_POSE, "pitch": 0.0},                   # sat down, head level
     {"t": 3.1, "pose": {**SIT_POSE, **NOD_1}, "pitch": 0.0},      # nod 1: droop
-    {"t": 3.3, "pose": {**SIT_POSE, **CATCH_1}, "pitch": 0.0},    # ...jerk!
+    {"t": 3.4, "pose": {**SIT_POSE, **CATCH_1}, "pitch": 0.0},    # ...jerk!
     {"t": 4.3, "pose": {**SIT_POSE, **NOD_2}, "pitch": 0.04},     # nod 2: deeper
-    {"t": 4.5, "pose": {**SIT_POSE, **CATCH_2}, "pitch": 0.02},   # ...jerk
-    {"t": 5.7, "pose": {**SIT_POSE, **NOD_3}, "pitch": 0.08},     # nod 3: deeper still
+    {"t": 4.6, "pose": {**SIT_POSE, **CATCH_2}, "pitch": 0.02},   # ...jerk
+    {"t": 5.6, "pose": {**SIT_POSE, **NOD_3}, "pitch": 0.08},     # nod 3: deeper still
     {"t": 5.9, "pose": {**SIT_POSE, **CATCH_3}, "pitch": 0.04},   # ...a weak jerk
-    {"t": 7.6, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH},  # slumps onto its beak
-    {"t": 7.9, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH},  # a beat
-    {"t": 8.8, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH},      # snuggles onto its cheek
+    {"t": 7.5, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH},  # slumps onto its beak
+    {"t": 7.8, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH},  # a beat
+    {"t": 8.7, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH},      # snuggles onto its cheek
     {"t": 10.5, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH},     # fast asleep
 ]
 EPISODE_LENGTH_S = KEYFRAMES[-1]["t"]  # 10.5 s → --duration-s 10.5
 SLUMP_START = KEYFRAMES[9]["t"]  # 5.9 s: the final droop begins
-# The head may touch the floor from here (the beak lands at ~7.6 s); before
+# The head may touch the floor from here (the beak lands at ~7.5 s); before
 # this, touching down is a face-plant.
-HEAD_DOWN_ALLOWED = 7.0
-BEAK_LANDED = KEYFRAMES[10]["t"]  # 7.6 s: resting the head on the floor pays from here
+HEAD_DOWN_ALLOWED = 6.9
+BEAK_LANDED = KEYFRAMES[10]["t"]  # 7.5 s: resting the head on the floor pays from here
 
 
 def _kf(t: float) -> dict:
@@ -141,12 +143,18 @@ def _kf(t: float) -> dict:
 
 
 # Mid-routine starts (see MID_ROUTINE_PROB below): keyframe, settled trunk
-# pitch and height (pose study, 25 Oct 2026), and how often to pick it.
+# pitch and height (pose study, 25 Oct 2026), and how often to pick it. Run 3
+# adds each nod's lowest point: run 2 averaged the nods and so never reached a
+# droop's bottom, where the catch has to happen. And the snuggled pose, so the
+# critic learns early how good it is to be there.
 SPAWN_STATES: list[dict] = [
     {"t": 2.3, "pose": _kf(2.3)["pose"], "pitch": math.radians(-0.5), "z": 0.0609, "weight": 1.0},  # just sat
-    {"t": 4.5, "pose": _kf(4.5)["pose"], "pitch": math.radians(2.1), "z": 0.0611, "weight": 1.0},   # after nod 2
-    {"t": 5.9, "pose": _kf(5.9)["pose"], "pitch": math.radians(5.2), "z": 0.0608, "weight": 2.0},   # slump starts
-    {"t": 7.6, "pose": _kf(7.6)["pose"], "pitch": math.radians(63.3), "z": 0.0658, "weight": 2.0},  # on its beak
+    {"t": 3.1, "pose": _kf(3.1)["pose"], "pitch": math.radians(1.2), "z": 0.0612, "weight": 1.0},   # bottom of nod 1
+    {"t": 4.3, "pose": _kf(4.3)["pose"], "pitch": math.radians(2.8), "z": 0.0611, "weight": 1.0},   # bottom of nod 2
+    {"t": 5.6, "pose": _kf(5.6)["pose"], "pitch": math.radians(4.5), "z": 0.0611, "weight": 1.0},   # bottom of nod 3
+    {"t": 5.9, "pose": _kf(5.9)["pose"], "pitch": math.radians(5.2), "z": 0.0608, "weight": 1.5},   # slump starts
+    {"t": 7.5, "pose": _kf(7.5)["pose"], "pitch": math.radians(63.3), "z": 0.0658, "weight": 1.5},  # on its beak
+    {"t": 8.7, "pose": _kf(8.7)["pose"], "pitch": math.radians(60.0), "z": 0.0678, "weight": 0.5},  # snuggled
 ]
 
 # "Sleepy time" can come mid-walk. As for PoliteBow v2 and PlayDead, a share
@@ -167,7 +175,7 @@ _HEAD_TURN_JOINTS = [7, 8]  # head_yaw, head_roll: the nod counter, then the snu
 # never slumped by iteration 500: the slump and the snuggle got no practice.
 # Trunk pitch and height are where each pose settles (scripts/sleepy_pose_study.py,
 # candidates kf_*s). Weighted towards the slump, the hardest part.
-MID_ROUTINE_PROB = 0.3
+MID_ROUTINE_PROB = 0.4
 
 
 def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -217,11 +225,13 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
 
     # ── Task rewards ────────────────────────────────────────────────────────
     # The head is the performance: the yawn and the three nods. Tracked
-    # tighter than the legs, so a 0.3 rad nod is clearly worth doing.
+    # tighter than the legs, so a 0.3 rad nod is clearly worth doing. Run 2
+    # (std 0.25, weight 3) settled for averaging the nods; tighter and heavier
+    # makes the average cost more.
     cfg.rewards["sleepy_head"] = RewardTermCfg(
         func=play_dead_mdp.pose_track,
-        weight=3.0,
-        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.25},
+        weight=4.0,
+        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.2},
     )
     cfg.rewards["sleepy_head_l1_cost"] = RewardTermCfg(
         func=play_dead_mdp.pose_l1_cost,

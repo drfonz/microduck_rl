@@ -21,15 +21,15 @@ The files:
 | 0.0 | standing (HOME) | 0° | 0° / 0° | 0° |
 | 0.7–1.0 | yawn: nose up | −37° | 0° / 0° | 0° |
 | 2.3 | sat down (the SitStand keyframe) | 0° | 0° / 0° | 0° |
-| 3.1 / 3.3 | nod 1: droop / jerk | 23° / 9° | 9° / 7° | 0° |
-| 4.3 / 4.5 | nod 2: droop / jerk | 43° / 21° | 17° / 14° | ~2° |
-| 5.7 / 5.9 | nod 3: droop / jerk | 63° / 40° | 26° / 21° | ~4° |
-| 7.6 | slumped asleep: beak on the floor, bum highest | — | 26° / 21° | 63° |
-| 7.9 | a beat | — | 26° / 21° | 63° |
-| 8.8 | snuggled: lying on its cheek | — | 80° / 0° | 60° |
+| 3.1 / 3.4 | nod 1: droop / jerk | 23° / 9° | 9° / 7° | 0° |
+| 4.3 / 4.6 | nod 2: droop / jerk | 43° / 21° | 17° / 14° | ~2° |
+| 5.6 / 5.9 | nod 3: droop / jerk | 63° / 40° | 26° / 21° | ~4° |
+| 7.5 | slumped asleep: beak on the floor, bum highest | — | 26° / 21° | 63° |
+| 7.8 | a beat | — | 26° / 21° | 63° |
+| 8.7 | snuggled: lying on its cheek | — | 80° / 0° | 60° |
 | 10.5 | fast asleep: the episode ends | — | 80° / 0° | 60° |
 
-Each keyframe blends into the next with a smoothstep. The droops are slow (0.8 to 1.2 s) and the jerks fast (0.2 s).
+Each keyframe blends into the next with a smoothstep. The droops are slow (0.8 to 1.0 s) and the jerks fast (0.3 s).
 
 ## Design choices
 
@@ -52,6 +52,29 @@ Each keyframe blends into the next with a smoothstep. The droops are slow (0.8 t
 1. **A posture counter for the nods:** each nod turns the head further towards its sleeping side (yaw 9°, 17°, 26°; roll 7°, 14°, 21°), the catches keep the turn, and the snuggle finishes it. The head-turn term is tighter (std 0.25) with a stronger L1 pull (−0.5).
 2. **Mid-routine starts (reverse curriculum):** 30% of training episodes start at rest in a keyframe pose (just sat, after nod 2, at the start of the slump, slumped on the beak; weighted 1:1:2:2), with the episode clock set to that keyframe. `bow_mdp._episode_time` accepts a per-env clock offset (no effect on tasks that don't set one) and a clock-based time-out ends those episodes with the routine. Mid-walk starts drop from 40% to 30%.
 3. **Eval video** turns the duck to face the camera (resets give it a random heading) and reports the head turn at each nod.
+
+## Run 2 → run 3
+
+**Run 2**, headless eval from a still stand (play config):
+
+| | Iteration 500 | Iteration 1500 |
+|---|---|---|
+| Asleep at the end (trunk ≈ 60°, head on the floor, feet down) | 64% | 91% (66% with training DR) |
+| Slump (trunk pitch rising) | from ~8 s, late | ~7 to 9.5 s (reference 5.9 to 7.6 s) |
+| Nods counted | 0 | 0 |
+| Head turn at the nods (target 9°, 17°, 26°) | 3°, 9°, 15° | 6°, 12°, 19° |
+| Final head yaw (target 80°) | 26° | 14° |
+| Head landing speed (median) | 0.22 m/s | 0.20 m/s |
+
+The training reward was flat from iteration 500 to 1500.
+
+**Is the snuggle physically possible?** Open loop, with no policy: from the settled beak-down pose, sweeping the servo targets to the snuggled pose over 0.9 s (or 2 s) rolls the head onto its cheek (yaw 89° against 80°, head speed at most 0.16 m/s). So the snuggle is a learning problem, not friction: while the slump lands late, a full episode leaves no time for it.
+
+**Run 3** (fine-tuned from run 2's last checkpoint):
+
+1. **Starts at each nod's lowest point** (and in the snuggled pose): run 2 averaged the nods and so never reached the bottom of a droop, where the catch has to happen. Mid-routine share 30% → 40%.
+2. **Jerks 0.3 s instead of 0.2 s:** the actor has to time each catch from its own pose; a wider feature forgives small timing errors.
+3. **Head tracking tighter and heavier** (std 0.25 → 0.2, weight 3 → 4): the average of the nods costs more.
 
 ## How it is taught
 
