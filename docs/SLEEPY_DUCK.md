@@ -126,6 +126,17 @@ Headless evals, 256 ducks each (training DR = the training config's randomisatio
 
 **Note on the evaluator:** until commit `56775a66`, `sleepy_duck_eval.py --train-dr` used the training config with its mid-walk and mid-routine starts; those episodes end early and their clocks don't match the evaluator's, so the training-DR figures for runs 2 to 4 above are understated.
 
+**Note on the command block:** the table above was measured with the training env's commands. The roulade family keeps mjlab's velocity default `rel_forward_envs = 0.2`, so at every command resample a fifth of the ducks get a forward command of at least 0.3 m/s, whatever the ±0.01 ranges say (training included). The robot's runtime feeds an episodic trick exact zeros, which the evaluator now does by default (commit `e13b60b0`; `--train-commands` for the old behaviour). Run 5 at iteration 1499 re-evaluated with zeros, 1,024 ducks each:
+
+| | Toppled | Asleep / snuggled | Head landing: median, 99th percentile, worst |
+|---|---|---|---|
+| Stand (play) | 0% | 100% / 100% | 0.17, 0.45, 0.47 m/s |
+| Stand, training DR | 0% | 100% / 100% | 0.18, 0.45, 0.47 m/s |
+| Mid-walk + training DR, zero commands (two runs) | 2.0%, 1.2% | 97.9% / 97.5%, 98.7% / 98.2% | 0.16, –, 1.90; 0.17, 0.46, 1.16 m/s |
+| Mid-walk + training DR, training commands | 1.4% | 98.6% / 98.1% | 0.17, –, 1.86 m/s |
+
+Three nods in 100% from a stand, head turn 9°, 17°, 27°, jerks 2.03 rad/s: the zero commands change nothing measurable. The worst head landing grows with the number of ducks (0.45 m/s over 256 mid-walk ducks, up to 1.9 m/s over 1,024), so the evaluator now also reports the 99th percentile.
+
 ## Run 6 → run 7: does it work from scratch?
 
 **Run 6** trained the config at the tip of the branch (commit `29a96065`) from scratch, 3,000 iterations. Headless evals, 256 ducks:
@@ -140,6 +151,8 @@ Headless evals, 256 ducks each (training DR = the training config's randomisatio
 It falls asleep and snuggles, but **never learns the nods**: the staged runs were needed. One difference stands out. Run 6's smoothing penalties ramp up (action rate −0.2 → −0.4, torque rate 0 → −1e-3 by iteration 2,000), while each fine-tune in the staged chain restarted those ramps, so the chain never trained with more than −0.3 / −5e-4. Heavy smoothing rounds off the jerks.
 
 **Run 7** trains from scratch again with the action-rate penalty held at −0.2 and the torque-rate penalty capped at −5e-4.
+
+Iteration 1000 (256 ducks, zero commands): asleep and snuggled 100% from a stand, nothing toppled, but no nods yet (0 nods in 97% of episodes; the head turn steps 7°, 13°, 21° without the droop-and-catch), as in run 6.
 
 ## How it is taught
 
