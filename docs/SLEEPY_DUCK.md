@@ -192,6 +192,18 @@ With `scripts/sleepy_pose_study.py`: each pose dropped into the training env (gr
 
 Not checked: the transitions. Whether the duck can slump softly, and roll its head without scrubbing, is what training finds out.
 
+## Run 8: the staged chain in one run
+
+The staged chain differed from the from-scratch runs in **when** things arrived, not in its final rewards: each fine-tune added one lesson to a policy that already did the previous one, and each restarted the torque-rate penalty at zero (so run 3 found the catches, and run 4 sharpened them, with no tax on quick torque changes) and the centre-of-mass randomisation small. Run 8 (commit `f37eee9a`) replays that inside one run of 5,000 iterations:
+
+| Stage | Iterations | Head tracking | Mid-routine starts | Snuggle terms | Torque-rate penalty | CoM randomisation |
+|---|---|---|---|---|---|---|
+| The slump | 0–1,500 | run 2's: std 0.25, weight 3 | just sat, slump starts, on the beak | off | 0, then −5e-4 from 1,000 | ramps from 3 mm |
+| The catches | 1,500–3,500 | std 0.2, weight 4 | + the bottom of each nod | off | 0 | restarts at 3 mm |
+| The snuggle | 3,500–5,000 | std 0.2, weight 4 | + snuggled | on | 0, then −5e-4 from 4,000 | restarts at 3 mm, 10 mm by the end |
+
+The mid-routine share stays 0.4 throughout (and 0 in play and evaluation). `tests/test_sleepy_duck_cfg.py::test_one_run_three_stages` drives every curriculum term through the stages; a live check on the GPU box did the same on the real env.
+
 ## The known risks
 
 1. **Telling the nods apart.** The actor has no clock. Depth alone was not enough in run 1; run 2 adds the head-turn counter. If the eval still shows fewer than three nods, make the turn steps bigger (or go back to two nods).
