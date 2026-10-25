@@ -248,6 +248,15 @@ def test_head_turn_jobs_hand_over_at_the_snuggle():
     assert yaw_at[SNUGGLE_START] < 0.5 < HEAD_YAW_SNUGGLE  # the big turn is the snuggle's
 
 
+def test_smoothing_stays_at_the_staged_runs_levels():
+    """Run 6 (ramps to −0.4 / −1e-3, from scratch) never learnt the nods."""
+    cfg = make_microduck_sleepy_duck_env_cfg()
+    assert "action_rate_weight" not in cfg.curriculum
+    assert cfg.rewards["action_rate_l2"].weight == -0.2
+    stages = cfg.curriculum["torque_rate_weight"].params["weight_stages"]
+    assert min(st["weight"] for st in stages) >= -5e-4
+
+
 def test_dense_checkpoints():
     assert MicroduckSleepyDuckRlCfg.save_interval <= 50
 

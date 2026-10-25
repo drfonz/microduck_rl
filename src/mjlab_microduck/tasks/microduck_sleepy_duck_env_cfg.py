@@ -359,20 +359,14 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
         params={**kf, "period": EPISODE_LENGTH_S},
     )
 
-    # ── Curriculum: polish after discovery ───────────────────────────────────
-    # Lighter than PlayDead's (−0.6 at the end): heavy smoothing would round
-    # off the catches, and the jerks are the joke.
-    cfg.curriculum["action_rate_weight"] = CurriculumTermCfg(
-        func=microduck_mdp.reward_weight,
-        params={
-            "reward_name": "action_rate_l2",
-            "weight_stages": [
-                {"step": 0, "weight": -0.2},
-                {"step": 1000 * 24, "weight": -0.3},
-                {"step": 2000 * 24, "weight": -0.4},
-            ],
-        },
-    )
+    # ── Smoothing: held low ──────────────────────────────────────────────────
+    # The action-rate penalty stays at its starting weight, and the torque-rate
+    # penalty is capped at −5e-4, the most the staged runs (2 → 3 → 4 → 5) ever
+    # trained with: each fine-tune restarted their ramps. Trained from scratch
+    # with the ramps to −0.4 and −1e-3 (run 6), the duck slumped and snuggled
+    # but never nodded: heavy smoothing rounds off the jerks, and the jerks are
+    # the joke. (action_rate_l2 is set to −0.2 with the costs above.)
+    cfg.curriculum.pop("action_rate_weight", None)
     cfg.curriculum["torque_rate_weight"] = CurriculumTermCfg(
         func=microduck_mdp.reward_weight,
         params={
@@ -380,7 +374,6 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
             "weight_stages": [
                 {"step": 0, "weight": 0.0},
                 {"step": 1000 * 24, "weight": -5e-4},
-                {"step": 2000 * 24, "weight": -1e-3},
             ],
         },
     )

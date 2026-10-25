@@ -126,6 +126,21 @@ Headless evals, 256 ducks each (training DR = the training config's randomisatio
 
 **Note on the evaluator:** until commit `56775a66`, `sleepy_duck_eval.py --train-dr` used the training config with its mid-walk and mid-routine starts; those episodes end early and their clocks don't match the evaluator's, so the training-DR figures for runs 2 to 4 above are understated.
 
+## Run 6 → run 7: does it work from scratch?
+
+**Run 6** trained the config at the tip of the branch (commit `29a96065`) from scratch, 3,000 iterations. Headless evals, 256 ducks:
+
+| | Iteration 2000 | Iteration 2500 | Iteration 2999 |
+|---|---|---|---|
+| Asleep / snuggled, stand | 91% / 91% | 98% / 97% | 98% / 99% |
+| Asleep / snuggled, mid-walk + training DR | 91% / 84% | 95% / 95% | 93% / 94% |
+| Nods counted (0 / 1 / 2 / 3) | 255 / 0 / 0 / 0 | 230 / 26 / 0 / 0 | 228 / 28 / 0 / 0 |
+| Pitch tracking RMSE | 19.6° | 15.1° | 14.1° |
+
+It falls asleep and snuggles, but **never learns the nods**: the staged runs were needed. One difference stands out. Run 6's smoothing penalties ramp up (action rate −0.2 → −0.4, torque rate 0 → −1e-3 by iteration 2,000), while each fine-tune in the staged chain restarted those ramps, so the chain never trained with more than −0.3 / −5e-4. Heavy smoothing rounds off the jerks.
+
+**Run 7** trains from scratch again with the action-rate penalty held at −0.2 and the torque-rate penalty capped at −5e-4.
+
 ## How it is taught
 
 It works the same way as PlayDead: a hidden reference clock, a moving target, the clock given to the critic only, and no jackpots.
@@ -137,7 +152,7 @@ It works the same way as PlayDead: a hidden reference clock, a moving target, th
 - **Feet planted** for the whole episode, and **head resting** paid by the clock once the beak should have landed (never by state, so it cannot be farmed early).
 - **Safety costs:** head speed while touching the floor (a slam or a scrub is expensive, resting is free), the head touching down before 7 s, roll, drift.
 - **Termination:** the asleep pose leans forward ~60°, so the usual `fell_over` is removed. Tipping onto the back (< −40°, the yawn's risk), onto a side (> 45°) or on over the face (> 85°) ends the episode.
-- **Smoothing** (action rate) is lighter than PlayDead's at the end of training: heavy smoothing would round off the jerks, and the jerks are the joke.
+- **Smoothing** is held low: action rate at −0.2 throughout, torque rate capped at −5e-4 (see run 6 → run 7). Heavy smoothing rounds off the jerks, and the jerks are the joke.
 - **Symmetry loss is off:** the head snuggles onto one side only.
 - **Mid-walk starts:** 40% of training episodes start from a real mid-walk state (PoliteBow v2's gait bank).
 
