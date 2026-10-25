@@ -204,6 +204,36 @@ The staged chain differed from the from-scratch runs in **when** things arrived,
 
 The mid-routine share stays 0.4 throughout (and 0 in play and evaluation). `tests/test_sleepy_duck_cfg.py::test_one_run_three_stages` drives every curriculum term through the stages; a live check on the GPU box did the same on the real env.
 
+**It works: the whole trick in one run.** Headless evals, 256 ducks each, zero commands:
+
+| | Iteration 1500 | 2500 | 3500 | 4000 | 4500 | 4999 |
+|---|---|---|---|---|---|---|
+| Nods counted (0 / 1 / 2 / 3 / more), stand | 238 / 17 / 1 / 0 | 160 / 87 / 9 / 0 | 2 / 82 / 152 / 20 | 0 / 0 / 7 / 248 / 1 | 0 / 0 / 0 / 234 / 22 | 0 / 0 / 2 / 254 |
+| Asleep / snuggled, stand | 99% / 0% | 100% / 0% | 100% / 0% | 0% / 100% | 100% / 100% | 100% / 100% |
+| Jerk speed (reference 1.99 rad/s) | – | – | 0.90 | 1.91 | 2.00 | 1.69 |
+| Pitch / head tracking RMSE | 11.4° / 16.7° | 8.3° / 10.8° | 8.0° / 9.9° | 5.9° / 9.3° | 7.8° / 10.2° | 5.9° / 7.6° |
+
+(The snuggle is off until iteration 3,500 by design; at 4,000 it snuggles before settling fully into the asleep pose.) Iteration 4999 with 1,024 ducks each, zero commands, against run 5's iteration 1499:
+
+| | Run 8, iteration 4999 | Run 5, iteration 1499 |
+|---|---|---|
+| Three nods, stand / training DR | 99% / 99% | 100% / 100% |
+| Asleep / snuggled, stand (and training DR) | 100% / 100% | 100% / 100% |
+| Mid-walk + training DR: asleep / snuggled / toppled | 97.9% / 96.3% / 2.1% | 98.3% / 97.9% / 1.6% (two runs) |
+| Three nods, mid-walk + training DR (of the ducks still up) | 97% | – |
+| Head turn at the nods (target 9°, 17°, 26°) | 9°, 18°, 25° | 9°, 17°, 27° |
+| Jerk speed | 1.67 rad/s | 2.04 rad/s |
+| Head landing: median, 99th percentile (mid-walk) | 0.15, 0.69 m/s | 0.17, 0.46 m/s |
+| Pitch / head tracking RMSE, stand | 5.6° / 7.2° | 6.5° / 10.7° |
+
+So the recipe is one command:
+
+```bash
+uv run train Mjlab-SleepyDuck-Flat-MicroDuck --env.scene.num-envs 4096   # 5,000 iterations, about 4 h 50 on an RTX 3080 Ti
+```
+
+Run 8 tracks the routine more closely; run 5's catches are a little snappier and its worst landings mid-walk a little gentler.
+
 ## The known risks
 
 1. **Telling the nods apart.** The actor has no clock. Depth alone was not enough in run 1; run 2 adds the head-turn counter. If the eval still shows fewer than three nods, make the turn steps bigger (or go back to two nods).
