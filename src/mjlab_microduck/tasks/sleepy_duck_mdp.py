@@ -73,6 +73,21 @@ def pose_track_window(
     return play_dead_mdp.pose_track(env, keyframes, joint_indices, std, asset_cfg) * gate
 
 
+def pose_l1_cost_window(
+    env: ManagerBasedRlEnv,
+    keyframes: Sequence[dict],
+    joint_indices: Sequence[int],
+    t_start: float = 0.0,
+    t_end: float = math.inf,
+    asset_cfg: SceneEntityCfg = _ROBOT,
+) -> torch.Tensor:
+    """play_dead_mdp.pose_l1_cost (>= 0), charged only while ``t_start <= clock < t_end``:
+    a constant pull towards a target that is still far away."""
+    t = _episode_time(env)
+    gate = ((t >= t_start) & (t < t_end)).float()
+    return play_dead_mdp.pose_l1_cost(env, keyframes, joint_indices, asset_cfg) * gate
+
+
 def tipped_over(
     env: ManagerBasedRlEnv,
     max_roll: float = math.radians(45.0),

@@ -27,6 +27,7 @@ _COSTS = {
     "sleepy_head_l1_cost",
     "sleepy_legs_l1_cost",
     "sleepy_head_turn_l1_cost",
+    "sleepy_snuggle_l1_cost",
     "sleepy_drift_cost",
     "sleepy_roll_cost",
     "sleepy_early_head_contact_cost",
@@ -38,6 +39,7 @@ _REWARDS = {
     "sleepy_legs",
     "sleepy_head_turn",
     "sleepy_snuggle",
+    "sleepy_snuggle_roll",
     "feet_planted",
     "sleepy_head_resting",
 }
@@ -235,6 +237,12 @@ def test_head_turn_jobs_hand_over_at_the_snuggle():
     assert counter.func is snuggle.func is sleepy_duck_mdp.pose_track_window
     assert counter.params["t_end"] == snuggle.params["t_start"] == SNUGGLE_START
     assert snuggle.params["std"] > 2 * counter.params["std"]
+    # Yaw alone (run 4's yaw+roll term was satisfied by roll alone), with a
+    # linear pull over the same window.
+    assert snuggle.params["joint_indices"] == [_HEAD_YAW]
+    pull = r["sleepy_snuggle_l1_cost"]
+    assert pull.params["joint_indices"] == [_HEAD_YAW] and pull.params["t_start"] == SNUGGLE_START
+    assert r["sleepy_snuggle_roll"].params["joint_indices"] == [8]
     assert BEAK_LANDED < SNUGGLE_START < EPISODE_LENGTH_S
     yaw_at = {k["t"]: k["pose"].get(_HEAD_YAW, 0.0) for k in KEYFRAMES}
     assert yaw_at[SNUGGLE_START] < 0.5 < HEAD_YAW_SNUGGLE  # the big turn is the snuggle's

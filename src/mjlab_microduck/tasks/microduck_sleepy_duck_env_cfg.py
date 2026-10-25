@@ -274,11 +274,24 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # Job 2, the snuggle onto the cheek, the punchline. Runs 2 and 3 never
     # learnt it with the tight std above: it starts ~1 rad from its target,
     # where that Gaussian is flat (an open-loop test showed the servos do it
-    # easily). Wide and heavier, from the snuggle's start.
+    # easily). Run 4 tried one wide term over yaw AND roll: the policy took
+    # the roll half (roll 0, the easy part) and never turned. So yaw gets its
+    # own wide term plus a linear pull (every degree of turning pays), and
+    # roll its own small one, from the snuggle's start.
     cfg.rewards["sleepy_snuggle"] = RewardTermCfg(
         func=sleepy_duck_mdp.pose_track_window,
         weight=3.0,
-        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.6, "t_start": SNUGGLE_START},
+        params={**kf, "joint_indices": [_HEAD_TURN_JOINTS[0]], "std": 1.0, "t_start": SNUGGLE_START},
+    )
+    cfg.rewards["sleepy_snuggle_l1_cost"] = RewardTermCfg(
+        func=sleepy_duck_mdp.pose_l1_cost_window,
+        weight=-1.0,
+        params={**kf, "joint_indices": [_HEAD_TURN_JOINTS[0]], "t_start": SNUGGLE_START},
+    )
+    cfg.rewards["sleepy_snuggle_roll"] = RewardTermCfg(
+        func=sleepy_duck_mdp.pose_track_window,
+        weight=1.0,
+        params={**kf, "joint_indices": [_HEAD_TURN_JOINTS[1]], "std": 0.25, "t_start": SNUGGLE_START},
     )
     # The L1 pull on the head turn (both jobs) gives a gradient from far away.
     cfg.rewards["sleepy_head_turn_l1_cost"] = RewardTermCfg(
