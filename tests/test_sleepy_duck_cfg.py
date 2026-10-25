@@ -35,6 +35,7 @@ _COSTS = {
 }
 _REWARDS = {
     "sleepy_head",
+    "sleepy_head_coarse",
     "sleepy_pitch",
     "sleepy_legs",
     "sleepy_head_turn",
@@ -55,15 +56,26 @@ def _nose_down(neck: float, head: float) -> float:
     return -(neck - 0.3491) + (head - 0.3491)
 
 
+def _stage_weights(cfg, name: str) -> list[float]:
+    """Every weight a reward term takes over training: its curriculum stages, or its fixed weight."""
+    for term in cfg.curriculum.values():
+        if term.params.get("reward_name") == name:
+            return [st["weight"] for st in term.params["weight_stages"]]
+    return [cfg.rewards[name].weight]
+
+
 def test_reward_signs():
-    """The sign-convention footgun from AGENTS.md: costs negative, rewards positive."""
-    r = make_microduck_sleepy_duck_env_cfg().rewards
+    """The sign-convention footgun from AGENTS.md: costs negative, rewards positive, in
+    every stage (a staged term is 0 while it is switched off)."""
+    cfg = make_microduck_sleepy_duck_env_cfg()
     for name in _COSTS:
-        assert r[name].weight < 0, name
+        w = _stage_weights(cfg, name)
+        assert max(w) <= 0 and min(w) < 0, name
     for name in _REWARDS:
-        assert r[name].weight > 0, name
+        w = _stage_weights(cfg, name)
+        assert min(w) >= 0 and max(w) > 0, name
     # gentle_landing is self-negating (returns -|a_z|): POSITIVE weight.
-    assert r["gentle_landing"].weight > 0
+    assert cfg.rewards["gentle_landing"].weight > 0
 
 
 def test_inherited_tasks_fully_removed():
@@ -313,3 +325,63 @@ def test_eval_feeds_the_runtime_zero_commands():
     before = train.commands["twist"].rel_forward_envs
     ev._apply_eval_cfg(train, argparse.Namespace(from_walk=None, train_commands=True))
     assert train.commands["twist"].rel_forward_envs == before
+
+
+def test_one_run_three_stages():
+    """Run 8: the slump, then the catches, then the snuggle, in one run. Drives every
+    curriculum term with a stand-in env at points in each stage."""
+    from types import SimpleNamespace
+
+    from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import (
+        MAX_ITERATIONS,
+        MID_ROUTINE_PROB,
+        SPAWN_CATCHES,
+        SPAWN_SLUMP,
+        SPAWN_STATES,
+        STAGE_CATCHES,
+        STAGE_SNUGGLE,
+    )
+
+    assert 0 < STAGE_CATCHES < STAGE_SNUGGLE < MAX_ITERATIONS == MicroduckSleepyDuckRlCfg.max_iterations
+    nod_bottoms = {3.1, 4.3, 5.6}
+    assert not nod_bottoms & {st["t"] for st in SPAWN_SLUMP}
+    assert nod_bottoms <= {st["t"] for st in SPAWN_CATCHES} and max(st["t"] for st in SPAWN_CATCHES) < 8.0
+
+    cfg = make_microduck_sleepy_duck_env_cfg()
+    env = SimpleNamespace(
+        common_step_counter=0,
+        reward_manager=SimpleNamespace(get_term_cfg=cfg.rewards.__getitem__),
+        event_manager=SimpleNamespace(get_term_cfg=cfg.events.__getitem__),
+    )
+    spawn = cfg.events["mid_routine_spawn"].params
+    assert spawn["states"] is SPAWN_SLUMP  # before the first update too
+
+    def at(iteration: int) -> dict:
+        env.common_step_counter = iteration * 24 + 1
+        for term in cfg.curriculum.values():
+            term.func(env, None, **term.params)
+        w = {n: cfg.rewards[n].weight for n in ("sleepy_head_coarse", "sleepy_head", "sleepy_snuggle",
+                                               "sleepy_snuggle_l1_cost", "sleepy_snuggle_roll",
+                                               "joint_torque_rate_l2")}
+        assert spawn["prob"] == MID_ROUTINE_PROB  # the share is never staged
+        return {**w, "states": spawn["states"], "com": cfg.events["randomize_com"].params["ranges"][1]}
+
+    slump = at(100)
+    assert slump["sleepy_head_coarse"] == 3.0 and slump["sleepy_head"] == 0.0
+    assert slump["sleepy_snuggle"] == slump["sleepy_snuggle_l1_cost"] == slump["sleepy_snuggle_roll"] == 0.0
+    assert slump["states"] is SPAWN_SLUMP and slump["joint_torque_rate_l2"] == 0.0
+    assert at(1200)["joint_torque_rate_l2"] == -5e-4
+
+    catches = at(STAGE_CATCHES + 10)
+    assert catches["sleepy_head_coarse"] == 0.0 and catches["sleepy_head"] == 4.0
+    assert catches["sleepy_snuggle"] == 0.0 and catches["states"] is SPAWN_CATCHES
+    assert catches["joint_torque_rate_l2"] == 0.0 and catches["com"] == 0.003  # both restarted
+
+    snuggle = at(STAGE_SNUGGLE + 10)
+    assert snuggle["sleepy_snuggle"] == 3.0 and snuggle["sleepy_snuggle_l1_cost"] == -1.0
+    assert snuggle["sleepy_snuggle_roll"] == 1.0 and snuggle["sleepy_head"] == 4.0
+    assert snuggle["states"] is SPAWN_STATES and snuggle["com"] == 0.003
+
+    end = at(MAX_ITERATIONS - 1)
+    assert end["joint_torque_rate_l2"] == -5e-4 and end["com"] == 0.01  # as run 5 ended
+

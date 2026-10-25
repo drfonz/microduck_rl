@@ -16,7 +16,8 @@ stand policy) starts from a crouch with the head on the floor.
 How it is taught: the PlayDead method (see play_dead_mdp.py and
 docs/SLEEPY_DUCK.md). A hidden reference clock drives a keyframed target
 (joints + trunk pitch); the critic sees the clock, the actor does not; no
-terminal bonuses.
+terminal bonuses. One run in three stages (see STAGE_CATCHES): the slump, then
+the catches, then the snuggle.
 
 The beak is NOT part of this policy: the jaw has no servo in the 14-joint
 action space (in the sim it is fixed to the head). The yawn's open beak and
@@ -186,6 +187,24 @@ _HEAD_TURN_JOINTS = [7, 8]  # head_yaw, head_roll: the nod counter, then the snu
 # candidates kf_*s). Weighted towards the slump, the hardest part.
 MID_ROUTINE_PROB = 0.4
 
+# One run, three stages (run 8). Runs 6 and 7 trained the finished config from
+# scratch and never learnt the nods: the duck slumps and snuggles but averages
+# the three nods into one slow droop. The staged runs that did learn them
+# (2 → 3 → 4 → 5, each fine-tuning the last) taught one thing at a time: the
+# slump, then the catches, then the snuggle. Each fine-tune also restarted the
+# torque-rate penalty at zero and the centre-of-mass randomisation small, so
+# the catches were found with no tax on quick torque changes. These stages
+# replay that inside one run (in iterations).
+STAGE_CATCHES = 1500  # tight head tracking, rounds starting at the bottom of a nod
+STAGE_SNUGGLE = 3500  # the snuggle terms, and rounds starting snuggled (runs 3 + 4: 2,000)
+MAX_ITERATIONS = 5000  # the snuggle stage as long as run 5 (1,500)
+
+_SPAWN_AT = {st["t"]: st for st in SPAWN_STATES}
+# The slump: run 2's mix (no nod bottoms yet; they come with the catches).
+SPAWN_SLUMP: list[dict] = [_SPAWN_AT[2.3], {**_SPAWN_AT[5.9], "weight": 2.0}, {**_SPAWN_AT[7.5], "weight": 2.0}]
+# The catches: run 3's mix, without the snuggled pose.
+SPAWN_CATCHES: list[dict] = [st for st in SPAWN_STATES if st["t"] < SNUGGLE_START]
+
 
 def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     """Create the SleepyDuck environment configuration."""
@@ -223,7 +242,7 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     cfg.events["mid_routine_spawn"] = EventTermCfg(
         func=sleepy_duck_mdp.reset_mid_routine,
         mode="reset",
-        params={"prob": 0.0 if play else MID_ROUTINE_PROB, "states": SPAWN_STATES},
+        params={"prob": 0.0 if play else MID_ROUTINE_PROB, "states": SPAWN_SLUMP},  # staged below
     )
     # The runtime keeps the previous policy's last action in the observation
     # at a hand-off; mirror that for the walk spawns (actor AND critic).
@@ -241,6 +260,13 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
         func=play_dead_mdp.pose_track,
         weight=4.0,
         params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.2},
+    )
+    # Run 2's looser head tracking, for the first stage: follow the head's
+    # overall path while the slump is learnt, before the nods are asked for.
+    cfg.rewards["sleepy_head_coarse"] = RewardTermCfg(
+        func=play_dead_mdp.pose_track,
+        weight=3.0,
+        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.25},
     )
     cfg.rewards["sleepy_head_l1_cost"] = RewardTermCfg(
         func=play_dead_mdp.pose_l1_cost,
@@ -362,10 +388,11 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # ── Smoothing: held low ──────────────────────────────────────────────────
     # The action-rate penalty stays at its starting weight, and the torque-rate
     # penalty is capped at −5e-4, the most the staged runs (2 → 3 → 4 → 5) ever
-    # trained with: each fine-tune restarted their ramps. Trained from scratch
-    # with the ramps to −0.4 and −1e-3 (run 6), the duck slumped and snuggled
-    # but never nodded: heavy smoothing rounds off the jerks, and the jerks are
-    # the joke. (action_rate_l2 is set to −0.2 with the costs above.)
+    # trained with. Trained from scratch with the ramps to −0.4 and −1e-3
+    # (run 6), the duck slumped and snuggled but never nodded: heavy smoothing
+    # rounds off the jerks, and the jerks are the joke. (action_rate_l2 is set
+    # to −0.2 with the costs above.) The torque-rate penalty restarts at zero
+    # for the catches, as each fine-tune restarted it.
     cfg.curriculum.pop("action_rate_weight", None)
     cfg.curriculum["torque_rate_weight"] = CurriculumTermCfg(
         func=microduck_mdp.reward_weight,
@@ -374,9 +401,56 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
             "weight_stages": [
                 {"step": 0, "weight": 0.0},
                 {"step": 1000 * 24, "weight": -5e-4},
+                {"step": STAGE_CATCHES * 24, "weight": 0.0},
+                {"step": (STAGE_SNUGGLE + 500) * 24, "weight": -5e-4},
             ],
         },
     )
+
+    # ── One run, three stages (see STAGE_CATCHES) ────────────────────────────
+    # Weights per stage (the slump, the catches, the snuggle). The terms keep
+    # their stage-1 weight until the curriculum's first update.
+    starts = (0, STAGE_CATCHES, STAGE_SNUGGLE)
+    staged = {
+        "sleepy_head_coarse": (3.0, 0.0, 0.0),
+        "sleepy_head": (0.0, 4.0, 4.0),
+        "sleepy_snuggle": (0.0, 0.0, 3.0),
+        "sleepy_snuggle_l1_cost": (0.0, 0.0, -1.0),
+        "sleepy_snuggle_roll": (0.0, 0.0, 1.0),
+    }
+    for name, weights in staged.items():
+        cfg.rewards[name].weight = weights[0]
+        cfg.curriculum[f"{name}_stages"] = CurriculumTermCfg(
+            func=microduck_mdp.reward_weight,
+            params={
+                "reward_name": name,
+                "weight_stages": [{"step": it * 24, "weight": w} for it, w in zip(starts, weights)],
+            },
+        )
+    # Where the mid-routine rounds start (never their share: that stays
+    # MID_ROUTINE_PROB, and 0 in play/eval).
+    cfg.curriculum["mid_routine_states"] = CurriculumTermCfg(
+        func=microduck_mdp.event_param_curriculum,
+        params={
+            "event_name": "mid_routine_spawn",
+            "param_stages": [
+                {"step": it * 24, "params": {"states": states}}
+                for it, states in zip(starts, (SPAWN_SLUMP, SPAWN_CATCHES, SPAWN_STATES))
+            ],
+        },
+    )
+    # The centre-of-mass randomisation ramps up again in each stage, as it
+    # did in each fine-tune (the roulade's ramp, cut short by the next stage).
+    ramp = [(0, 0.003), (500, 0.005), (1000, 0.01), (1500, 0.015)]
+    bounds = (*starts, MAX_ITERATIONS)
+    for term, top in (("com_range", 0.015), ("head_com_range", 0.01)):
+        if term in cfg.curriculum:
+            cfg.curriculum[term].params["range_stages"] = [
+                {"step": (s0 + off) * 24, "range": min(rng, top)}
+                for s0, s1 in zip(bounds, bounds[1:])
+                for off, rng in ramp
+                if s0 + off < s1
+            ]
 
     return cfg
 
@@ -419,5 +493,5 @@ MicroduckSleepyDuckRlCfg = RslRlOnPolicyRunnerCfg(
     # develops over training.
     save_interval=50,
     num_steps_per_env=24,
-    max_iterations=3_000,
+    max_iterations=MAX_ITERATIONS,
 )
