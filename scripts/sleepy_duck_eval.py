@@ -223,8 +223,16 @@ def main() -> None:
 
 
 def _apply_from_walk(cfg, args) -> None:
+    """Every episode starts at t = 0 from a still stand (or mid-walk with
+    --from-walk). The training cfg (--train-dr) would otherwise also start
+    some episodes mid-walk and some mid-routine; those end early and their
+    clocks don't match this script's, which understated every training-DR
+    result before 25 Oct 2026 (runs 2 to 5)."""
+    cfg.events["mid_routine_spawn"].params["prob"] = 0.0
     if args.from_walk:
         cfg.events["gait_bank_spawn"].params.update(bank_path=args.from_walk, prob=1.0)
+    else:
+        cfg.events["gait_bank_spawn"].params["prob"] = 0.0
 
 
 def _record(args) -> None:
