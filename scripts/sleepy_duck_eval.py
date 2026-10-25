@@ -13,6 +13,13 @@ what the rollouts actually show (AGENTS.md: measure before theorising).
 bank) with the walker's last action handed over. Foot lifts are then only
 counted after the first 0.5 s (the stride finishing).
 
+The 13-D command block is all zeros, as the runtime feeds an episodic trick.
+The training env does not: the roulade family keeps mjlab's velocity default
+``rel_forward_envs = 0.2``, so at every command resample a fifth of the ducks
+are told to walk forward at >= 0.3 m/s (the ±0.01 ranges notwithstanding).
+``--train-commands`` evaluates with the training env's commands instead, which
+is what this script did before 25 Oct 2026.
+
 Reports: episodes that toppled, the head touching down too early, the
 fastest head impact, how many nods the duck actually did and how sharp the
 jerks were, trunk pitch and head tracking against the reference, and the
@@ -92,6 +99,8 @@ def main() -> None:
     p.add_argument("--repeats", type=int, default=1, help="episodes to record back to back in the video")
     p.add_argument("--from-walk", nargs="?", const=GAIT_BANK_PATH, default=None, metavar="BANK",
                    help=f"start every episode mid-walk from a gait bank (default {GAIT_BANK_PATH})")
+    p.add_argument("--train-commands", action="store_true",
+                   help="feed the training env's sampled commands, not the runtime's all-zero block")
     args = p.parse_args()
     if args.video:
         _record(args)
@@ -100,7 +109,7 @@ def main() -> None:
 
     cfg = load_env_cfg(TASK, play=not args.train_dr)
     cfg.scene.num_envs = args.num_envs
-    _apply_from_walk(cfg, args)
+    _apply_eval_cfg(cfg, args)
     env = ManagerBasedRlEnv(cfg=cfg, device=args.device)
     sess = ort.InferenceSession(args.onnx)
     in_name = sess.get_inputs()[0].name
@@ -193,7 +202,9 @@ def main() -> None:
         return x[ok].median().item() if ok.any() else float("nan")
 
     start = f"from mid-walk ({args.from_walk})" if args.from_walk else "from a still stand"
-    print(f"\n── SleepyDuck eval: {args.onnx}  ({B} envs, {'train-DR' if args.train_dr else 'play'} cfg, {start}) ──")
+    commands = "training commands" if args.train_commands else "runtime commands (all zero)"
+    print(f"\n── SleepyDuck eval: {args.onnx}  ({B} envs, {'train-DR' if args.train_dr else 'play'} cfg, {start}, "
+          f"{commands}) ──")
     print(f"toppled             : {toppled.float().mean() * 100:5.1f}% of episodes (target 0)")
     print(f"asleep at the end   : {asleep.float().mean() * 100:5.1f}% (trunk within 15° of {deg(SNUGGLE_PITCH):.0f}°, "
           "head on the floor, both feet down)")
@@ -222,17 +233,27 @@ def main() -> None:
     env.close()
 
 
-def _apply_from_walk(cfg, args) -> None:
-    """Every episode starts at t = 0 from a still stand (or mid-walk with
+def _apply_eval_cfg(cfg, args) -> None:
+    """Spawns and commands for an evaluation.
+
+    Every episode starts at t = 0 from a still stand (or mid-walk with
     --from-walk). The training cfg (--train-dr) would otherwise also start
     some episodes mid-walk and some mid-routine; those end early and their
     clocks don't match this script's, which understated every training-DR
-    result before 25 Oct 2026 (runs 2 to 5)."""
+    result before 25 Oct 2026 (runs 2 to 5).
+
+    The twist command is pinned to exactly zero, as on the robot, unless
+    --train-commands (the head and body slots are zero padding already)."""
     cfg.events["mid_routine_spawn"].params["prob"] = 0.0
     if args.from_walk:
         cfg.events["gait_bank_spawn"].params.update(bank_path=args.from_walk, prob=1.0)
     else:
         cfg.events["gait_bank_spawn"].params["prob"] = 0.0
+    if not getattr(args, "train_commands", False):
+        twist = cfg.commands["twist"]
+        twist.rel_forward_envs = 0.0
+        twist.rel_turn_in_place_envs = 0.0
+        twist.ranges.lin_vel_x = twist.ranges.lin_vel_y = twist.ranges.ang_vel_z = (0.0, 0.0)
 
 
 def _record(args) -> None:
@@ -241,7 +262,7 @@ def _record(args) -> None:
 
     cfg = load_env_cfg(TASK, play=not args.train_dr)
     cfg.scene.num_envs = 1
-    _apply_from_walk(cfg, args)
+    _apply_eval_cfg(cfg, args)
     # Front-left three-quarter view: the snuggle turns the face to the duck's
     # left, so this is the side where you see it asleep. Resets give the duck a
     # random heading, so each episode is turned to face the camera (_face_x).

@@ -287,3 +287,29 @@ def test_gait_bank_spawn_wiring():
     for cfg in (train, play):
         for group in ("actor", "critic"):
             assert cfg.observations[group].terms["actions"].func is bow_mdp.last_action_with_handoff
+
+
+def test_eval_feeds_the_runtime_zero_commands():
+    """The evaluator pins the twist command to exactly zero, as the runtime feeds an episodic
+    trick. The training env does not: mjlab's velocity default rel_forward_envs (inherited via the
+    roulade) tells a share of the ducks to walk forward at >= 0.3 m/s."""
+    import argparse
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "sleepy_duck_eval", Path(__file__).resolve().parents[1] / "scripts" / "sleepy_duck_eval.py"
+    )
+    ev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ev)
+
+    cfg = make_microduck_sleepy_duck_env_cfg(play=True)
+    ev._apply_eval_cfg(cfg, argparse.Namespace(from_walk=None, train_commands=False))
+    twist = cfg.commands["twist"]
+    assert twist.rel_forward_envs == 0.0 and twist.rel_turn_in_place_envs == 0.0
+    assert twist.ranges.lin_vel_x == twist.ranges.lin_vel_y == twist.ranges.ang_vel_z == (0.0, 0.0)
+
+    train = make_microduck_sleepy_duck_env_cfg(play=True)
+    before = train.commands["twist"].rel_forward_envs
+    ev._apply_eval_cfg(train, argparse.Namespace(from_walk=None, train_commands=True))
+    assert train.commands["twist"].rel_forward_envs == before
