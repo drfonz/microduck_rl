@@ -21,7 +21,7 @@ The files:
 | 0.0 | standing (HOME) | 0° | 0° / 0° | 0° |
 | 0.7–1.0 | yawn: nose up | −37° | 0° / 0° | 0° |
 | 2.3 | sat down (the SitStand keyframe) | 0° | 0° / 0° | 0° |
-| 3.1 / 3.4 | nod 1: droop / jerk | 23° / 9° | 9° / 7° | 0° |
+| 3.1 / 3.4 | nod 1: droop / jerk | 29° / 4° | 9° / 7° | 0° |
 | 4.3 / 4.6 | nod 2: droop / jerk | 43° / 21° | 17° / 14° | ~2° |
 | 5.6 / 5.9 | nod 3: droop / jerk | 63° / 40° | 26° / 21° | ~4° |
 | 7.5 | slumped asleep: beak on the floor, bum highest | — | 26° / 21° | 63° |
@@ -80,6 +80,28 @@ The training reward was flat from iteration 500 to 1500.
 2. **Jerks 0.3 s instead of 0.2 s:** the actor has to time each catch from its own pose; a wider feature forgives small timing errors.
 3. **Head tracking tighter and heavier** (std 0.25 → 0.2, weight 3 → 4): the average of the nods costs more.
 4. **Self-collision weight −1.0 → −0.05**, see above.
+
+## Run 3 → run 4
+
+**Run 3** (fine-tuned from run 2), headless eval from a still stand:
+
+| | Iteration 500 | Iteration 1499 |
+|---|---|---|
+| Asleep at the end | 100% | 100% (53% with training DR) |
+| Nods counted (histogram 0/1/2/3) | 10 / 38 / 208 / 0 | 0 / 0 / 256 / 0 |
+| Jerk speed (reference 1.85 rad/s) | 1.54 rad/s | 1.14 rad/s |
+| Head turn at the nods (target 9°, 17°, 26°) | 7°, 17°, 25° | 9°, 18°, 25° |
+| Pitch tracking RMSE | 4.9° | 4.8° |
+| Head down before 6.9 s | 22% | 73% (the slump now lands ~0.3 s early) |
+| Snuggled | 0% | 0% |
+
+The nods arrived (the catch practice and the self-collision fix), and the slump is on time. Two gaps remain: the duck skips **nod 1** (the smallest, 23° → 9°), and it never **snuggles**. The snuggle shares the tight head-turn term (std 0.25) with the nod counter, and it starts ~1 rad from its target, where that Gaussian is flat.
+
+**Run 4** (fine-tuned from run 3's last checkpoint):
+
+1. **A separate, wide snuggle term:** `sleepy_head_turn` (std 0.25) until the snuggle starts (7.8 s), then `sleepy_snuggle` (std 0.6, weight 3); the L1 pull stays on throughout.
+2. **Nod 1 is now the biggest jerk** (29° → 4°).
+3. **Head contact allowed from 6.5 s** (was 6.9 s): run 3's early landing is harmless, and the nods end at 5.9 s.
 
 ## How it is taught
 

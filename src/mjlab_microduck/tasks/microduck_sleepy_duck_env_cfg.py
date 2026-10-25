@@ -87,8 +87,8 @@ def _head(neck: float, head: float, yaw: float = 0.0, roll: float = 0.0) -> dict
 # Yawn, standing: nose up about 37°, while the runtime opens the beak. Not
 # more: neck +0.55 / head −0.45 tips even the sitting duck onto its back.
 YAWN_HEAD = _head(0.45, -0.2)
-# Three nods. Each droops deeper (nose down 23°, 43°, 63°) and each catch
-# recovers less (9°, 21°, 40°); the droops are slow, the catches are the jerks
+# Three nods. Each droops deeper (nose down 29°, 43°, 63°) and each catch
+# recovers less (4°, 21°, 40°); the droops are slow, the catches are the jerks
 # (0.3 s: run 2's 0.2 s jerks were never attempted; a clockless actor has to
 # time them from its own pose, and a wider feature forgives small timing
 # errors). The actor has no clock, and run 1 showed that depth alone does not
@@ -96,8 +96,10 @@ YAWN_HEAD = _head(0.45, -0.2)
 # turns the head a little further towards its sleeping side (yaw 9°, 17°,
 # 26°, roll 7°, 14°, 21°) and the catches keep that turn: a posture "counter"
 # the actor can read. The snuggle then finishes the turn.
-NOD_1 = _head(0.3491, 0.75, 0.15, 0.12)
-CATCH_1 = _head(0.3491, 0.5, 0.15, 0.12)
+# Nod 1 is the biggest jerk of the three (29° → 4°): run 3 learnt nods 2 and 3
+# but skipped the first, then the smallest (23° → 9°).
+NOD_1 = _head(0.3491, 0.85, 0.15, 0.12)
+CATCH_1 = _head(0.3491, 0.42, 0.15, 0.12)
 NOD_2 = _head(0.25, 1.0, 0.30, 0.24)
 CATCH_2 = _head(0.28, 0.65, 0.30, 0.24)
 NOD_3 = _head(0.1, 1.2, 0.45, 0.36)
@@ -140,7 +142,7 @@ EPISODE_LENGTH_S = KEYFRAMES[-1]["t"]  # 10.5 s → --duration-s 10.5
 SLUMP_START = KEYFRAMES[9]["t"]  # 5.9 s: the final droop begins
 # The head may touch the floor from here (the beak lands at ~7.5 s); before
 # this, touching down is a face-plant.
-HEAD_DOWN_ALLOWED = 6.9
+HEAD_DOWN_ALLOWED = 6.5  # run 3 landed ~0.3 s early (harmless); the nods end at 5.9 s
 BEAK_LANDED = KEYFRAMES[10]["t"]  # 7.5 s: resting the head on the floor pays from here
 SNUGGLE_START = KEYFRAMES[11]["t"]  # 7.8 s: the head turn's second job begins
 
