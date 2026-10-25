@@ -217,8 +217,10 @@ def main() -> None:
           f"(reference {ref_catch / env.step_dt:.2f})")
     print(f"head down too early : {early_head.float().mean() * 100:5.1f}% (before {HEAD_DOWN_ALLOWED:.1f} s)")
     print(f"a foot lifted       : {lifted_steps.mean() * env.step_dt:5.2f} s per episode (target 0)")
-    print(f"head impact speed   : {head_impact.median():5.2f} m/s median, {head_impact.max():.2f} max"
-          "   (lower is kinder to the camera)")
+    landed = head_impact[head_impact > 0]
+    p99 = torch.quantile(landed, 0.99).item() if len(landed) else float("nan")
+    print(f"head impact speed   : {head_impact.median():5.2f} m/s median, {p99:.2f} 99th percentile, "
+          f"{head_impact.max():.2f} max   (lower is kinder to the camera)")
     print(f"final trunk pitch   : {deg(med(final_pitch)):6.1f}° median (target {deg(SNUGGLE_PITCH):.0f}°)")
     print(f"final trunk roll    : {deg(med(final_roll.abs())):6.1f}° median |roll| (target 0°)")
     print(f"final head yaw      : {deg(med(final_yaw)):6.1f}° median (target {deg(HEAD_YAW_SNUGGLE):.0f}°)")
