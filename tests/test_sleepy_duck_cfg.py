@@ -95,6 +95,14 @@ def test_sit_matches_the_verified_sitstand_keyframe():
     assert SIT_POSE == SITTING_TARGET_OVERRIDES
 
 
+def test_resting_self_contact_is_cheap():
+    """The sit rests its ankles on its hips (6 contacts): at −1.0 that cost
+    more than the whole pitch term and the duck would not sit or sleep."""
+    r = make_microduck_sleepy_duck_env_cfg().rewards
+    assert -0.1 <= r["self_collisions"].weight < 0.0
+    assert 6 * abs(r["self_collisions"].weight) <= 0.1 * r["sleepy_pitch"].weight
+
+
 def test_keyframes_in_order_and_end_asleep():
     times = [k["t"] for k in KEYFRAMES]
     assert times == sorted(times) and times[0] == 0.0

@@ -70,11 +70,16 @@ The training reward was flat from iteration 500 to 1500.
 
 **Is the snuggle physically possible?** Open loop, with no policy: from the settled beak-down pose, sweeping the servo targets to the snuggled pose over 0.9 s (or 2 s) rolls the head onto its cheek (yaw 89° against 80°, head speed at most 0.16 m/s). So the snuggle is a learning problem, not friction: while the slump lands late, a full episode leaves no time for it.
 
+**Run 2 at iteration 2999:** asleep at the end in 100% of episodes from a still stand (70% with training DR), slump nearly on time (pitch RMSE 9.6°), head turn at the nods 5°, 14°, 24°; one nod in 40% of ducks, never three; no snuggle (it turns the head *back* to straight at the end).
+
+**The hidden cost.** Reading every reward term in the settled asleep poses: `self_collisions` was −300 per second on the beak (−150 snuggled), against +142 per second for the whole pitch term. The term counts *any* touch between robot parts (the sensor has no force history, so no threshold), and the SitStand sit keyframe rests each ankle bracket against its hip: 6 contacts, all the time the duck sits or sleeps. At PlayDead's weight (−1.0) the reference poses were simply too expensive to reach; the policy sat shallow and dodged them. A search for a contact-free sit found none that stays put through the nods (under load the ankle meets the hip anyway), and that resting contact is what makes the sit so stable. So the sit stays and the weight drops to −0.05.
+
 **Run 3** (fine-tuned from run 2's last checkpoint):
 
 1. **Starts at each nod's lowest point** (and in the snuggled pose): run 2 averaged the nods and so never reached the bottom of a droop, where the catch has to happen. Mid-routine share 30% → 40%.
 2. **Jerks 0.3 s instead of 0.2 s:** the actor has to time each catch from its own pose; a wider feature forgives small timing errors.
 3. **Head tracking tighter and heavier** (std 0.25 → 0.2, weight 3 → 4): the average of the nods costs more.
+4. **Self-collision weight −1.0 → −0.05**, see above.
 
 ## How it is taught
 

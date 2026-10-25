@@ -68,6 +68,12 @@ ENABLE_SYMMETRY = False
 
 # Sit: the SitStand env's stability-verified keyframe (a crouch, really).
 # Keep in sync with microduck_sitstand_env_cfg.SITTING_TARGET_OVERRIDES.
+# In it each ankle bracket rests against its hip (self-contact): that contact
+# is part of why it is so stable, and it is harmless (a resting touch, like
+# sitting on your heels). A search for a contact-free sit (25 Oct 2026) found
+# none that stays put through the nods: with the head forward the servos give
+# a little under load and the ankle meets the hip anyway. So the sit stays and
+# the self-collision cost is turned down instead (see below).
 SIT_POSE: dict[int, float] = {
     1: 0.0, 2: -0.4079, 3: 1.35, 4: 0.0,
     10: 0.0, 11: 0.4079, 12: -1.35, 13: 0.0,
@@ -302,7 +308,12 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # inherited from the roulade: it prices the bump into the sit.
     cfg.rewards["gentle_landing"].weight = 0.005
     cfg.rewards["action_rate_l2"].weight = -0.2
-    cfg.rewards["self_collisions"].weight = -1.0
+    # Counts ANY touch between robot parts (no force threshold: the sensor has
+    # no force history), so the sit's resting ankle-on-hip contacts (6) cost as
+    # much as a crash. At PlayDead's −1.0 that was ~−300/s while sitting or
+    # asleep, more than the whole pitch term: runs 1 and 2 sat shallow and
+    # dodged the asleep poses. −0.05 keeps a nudge against real collisions.
+    cfg.rewards["self_collisions"].weight = -0.05
     # Slow, small motions, but keep the motion-blockers low anyway: the
     # catches are quick, and the slump is a 55° rotation in 1.7 s.
     cfg.rewards["body_ang_vel"].weight = -0.005
