@@ -103,6 +103,29 @@ The nods arrived (the catch practice and the self-collision fix), and the slump 
 2. **Nod 1 is now the biggest jerk** (29° → 4°).
 3. **Head contact allowed from 6.5 s** (was 6.9 s): run 3's early landing is harmless, and the nods end at 5.9 s.
 
+## Run 4 → run 5: the whole trick
+
+**Run 4** (fine-tuned from run 3), iteration 500: **three nods in 100% of episodes**, jerks at 1.89 rad/s (reference 1.99), head turn at the nods 9°, 18°, 24°, asleep 100%. Still no snuggle: the wide snuggle term averaged yaw and roll, and the policy took the roll half (roll held at 0) without turning (final yaw 5°).
+
+**Run 5** (fine-tuned from run 4's iteration 500): the snuggle term is yaw only (std 1.0, weight 3), with a linear pull on yaw (−1 per rad) and a separate roll term (std 0.25), all from the snuggle's start.
+
+Headless evals, 256 ducks each (training DR = the training config's randomisation, every episode from t = 0):
+
+| | Iteration 500 | Iteration 1000 | Iteration 1499 |
+|---|---|---|---|
+| Three nods: stand / training DR / mid-walk | 99% / 100% / 99% | 100% / 100% / 98% | 100% / 100% / 100% |
+| Jerk speed (reference 1.99 rad/s) | 1.72 | 2.06 | 2.03 |
+| Head turn at the nods (target 9°, 17°, 26°) | 9°, 17°, 26° | 9°, 20°, 28° | 9°, 17°, 27° |
+| Asleep / snuggled, stand (and training DR) | 100% / 100% | 100% / 100% | 100% / 100% |
+| Asleep / snuggled, mid-walk + training DR | 98.4% / 98.4% | 98.8% / 98.0% | 98.8% / 98.8% |
+| Toppled, mid-walk + training DR | 1.2% | 1.2% | 1.2% |
+| Head landing speed: median, worst (mid-walk) | 0.20, 0.83 m/s | 0.19, 1.03 m/s | 0.17, 0.45 m/s |
+| Pitch tracking RMSE | 6.3° | 6.0° | 6.3° |
+
+**Candidate policy: run 5, iteration 1499.** It is reached by a chain of fine-tunes (run 2 → run 3 → run 4 @500 → run 5), so the config at the tip of this branch is being retrained from scratch to check that it reproduces the trick on its own.
+
+**Note on the evaluator:** until commit `56775a66`, `sleepy_duck_eval.py --train-dr` used the training config with its mid-walk and mid-routine starts; those episodes end early and their clocks don't match the evaluator's, so the training-DR figures for runs 2 to 4 above are understated.
+
 ## How it is taught
 
 It works the same way as PlayDead: a hidden reference clock, a moving target, the clock given to the critic only, and no jackpots.
