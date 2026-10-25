@@ -37,6 +37,7 @@ _REWARDS = {
     "sleepy_pitch",
     "sleepy_legs",
     "sleepy_head_turn",
+    "sleepy_snuggle",
     "feet_planted",
     "sleepy_head_resting",
 }
@@ -222,6 +223,21 @@ def test_clock_offset_shifts_the_episode_clock():
     assert torch.allclose(bow_mdp._episode_time(env), torch.tensor([0.2, 0.2]))
     env._clock_offset_s = torch.tensor([0.0, 7.6])
     assert torch.allclose(bow_mdp._episode_time(env), torch.tensor([0.2, 7.8]))
+
+
+def test_head_turn_jobs_hand_over_at_the_snuggle():
+    """Tight counter during the nods, wide snuggle afterwards: no gap, no overlap."""
+    from mjlab_microduck.tasks import sleepy_duck_mdp
+    from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import SNUGGLE_START
+
+    r = make_microduck_sleepy_duck_env_cfg().rewards
+    counter, snuggle = r["sleepy_head_turn"], r["sleepy_snuggle"]
+    assert counter.func is snuggle.func is sleepy_duck_mdp.pose_track_window
+    assert counter.params["t_end"] == snuggle.params["t_start"] == SNUGGLE_START
+    assert snuggle.params["std"] > 2 * counter.params["std"]
+    assert BEAK_LANDED < SNUGGLE_START < EPISODE_LENGTH_S
+    yaw_at = {k["t"]: k["pose"].get(_HEAD_YAW, 0.0) for k in KEYFRAMES}
+    assert yaw_at[SNUGGLE_START] < 0.5 < HEAD_YAW_SNUGGLE  # the big turn is the snuggle's
 
 
 def test_dense_checkpoints():

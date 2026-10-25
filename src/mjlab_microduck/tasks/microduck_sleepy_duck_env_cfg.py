@@ -142,6 +142,7 @@ SLUMP_START = KEYFRAMES[9]["t"]  # 5.9 s: the final droop begins
 # this, touching down is a face-plant.
 HEAD_DOWN_ALLOWED = 6.9
 BEAK_LANDED = KEYFRAMES[10]["t"]  # 7.5 s: resting the head on the floor pays from here
+SNUGGLE_START = KEYFRAMES[11]["t"]  # 7.8 s: the head turn's second job begins
 
 
 def _kf(t: float) -> dict:
@@ -260,16 +261,24 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
         weight=-0.5,
         params={**kf, "joint_indices": _LEG_JOINTS},
     )
-    # The head turn: a little more with each nod (the counter that tells the
-    # nods apart), then the snuggle onto the cheek, the punchline. std 0.25 so
-    # a 0.15 rad step between nods is clearly worth taking; the L1 pull gives
-    # a gradient towards the snuggle's 1.4 rad from far away (PlayDead's head
-    # turn, Gaussian only at std 0.3, took ~1,600 iterations).
+    # The head turn, job 1: a little more with each nod (the counter that
+    # tells the nods apart). std 0.25 so a 0.15 rad step between nods is
+    # clearly worth taking. Until the snuggle starts.
     cfg.rewards["sleepy_head_turn"] = RewardTermCfg(
-        func=play_dead_mdp.pose_track,
+        func=sleepy_duck_mdp.pose_track_window,
         weight=2.0,
-        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.25},
+        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.25, "t_end": SNUGGLE_START},
     )
+    # Job 2, the snuggle onto the cheek, the punchline. Runs 2 and 3 never
+    # learnt it with the tight std above: it starts ~1 rad from its target,
+    # where that Gaussian is flat (an open-loop test showed the servos do it
+    # easily). Wide and heavier, from the snuggle's start.
+    cfg.rewards["sleepy_snuggle"] = RewardTermCfg(
+        func=sleepy_duck_mdp.pose_track_window,
+        weight=3.0,
+        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.6, "t_start": SNUGGLE_START},
+    )
+    # The L1 pull on the head turn (both jobs) gives a gradient from far away.
     cfg.rewards["sleepy_head_turn_l1_cost"] = RewardTermCfg(
         func=play_dead_mdp.pose_l1_cost,
         weight=-0.5,

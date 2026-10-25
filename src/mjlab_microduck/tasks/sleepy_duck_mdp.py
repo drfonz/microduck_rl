@@ -30,6 +30,7 @@ import torch
 
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
+from mjlab_microduck.tasks import play_dead_mdp
 from mjlab_microduck.tasks.bow_mdp import _episode_time, _handoff_buffers, _servo_ids, trunk_pitch
 
 if TYPE_CHECKING:
@@ -50,6 +51,26 @@ def contact_reward_after(env: ManagerBasedRlEnv, sensor_name: str, t_start: floa
     if found.dim() > 1:
         found = found.any(dim=-1)
     return found.float() * (_episode_time(env) >= t_start).float()
+
+
+def pose_track_window(
+    env: ManagerBasedRlEnv,
+    keyframes: Sequence[dict],
+    joint_indices: Sequence[int],
+    std: float = 0.3,
+    t_start: float = 0.0,
+    t_end: float = math.inf,
+    asset_cfg: SceneEntityCfg = _ROBOT,
+) -> torch.Tensor:
+    """play_dead_mdp.pose_track, paid only while ``t_start <= clock < t_end``.
+
+    The head turn has two jobs that want different stds: the small nod
+    counter (tight, so a 0.15 rad step is worth taking) and the snuggle,
+    which starts ~1 rad from its target, where a tight Gaussian is flat.
+    """
+    t = _episode_time(env)
+    gate = ((t >= t_start) & (t < t_end)).float()
+    return play_dead_mdp.pose_track(env, keyframes, joint_indices, std, asset_cfg) * gate
 
 
 def tipped_over(
