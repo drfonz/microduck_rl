@@ -152,7 +152,17 @@ It falls asleep and snuggles, but **never learns the nods**: the staged runs wer
 
 **Run 7** trains from scratch again with the action-rate penalty held at −0.2 and the torque-rate penalty capped at −5e-4.
 
-Iteration 1000 (256 ducks, zero commands): asleep and snuggled 100% from a stand, nothing toppled, but no nods yet (0 nods in 97% of episodes; the head turn steps 7°, 13°, 21° without the droop-and-catch), as in run 6.
+Headless evals, 256 ducks each, zero commands:
+
+| | Iteration 1500 | Iteration 2000 | Iteration 2500 | Iteration 2999 |
+|---|---|---|---|---|
+| Asleep / snuggled, stand | 100% / 100% | 100% / 99.6% | 99.2% / 100% | 100% / 100% |
+| Asleep / snuggled, mid-walk + training DR | 97.7% / 97.3% | 96.5% / 95.3% | 96.9% / 97.3% | 96.1% / 94.1% |
+| Three nods | 0% | 0% | 0% | 0% |
+| Head turn at the nods (target 9°, 17°, 26°) | 8°, 13°, 20° | 7°, 12°, 19° | 9°, 14°, 19° | 8°, 14°, 20° |
+| Pitch tracking RMSE | 13.2° | 15.2° | 16.7° | 14.2° |
+
+**No nods, again.** Holding the smoothing penalties low did not help: from a fresh start, the final config learns to fall asleep and snuggle but never the nods. The video shows why. The duck barely sits (it stays up on bent knees), lowers its head in one slow droop through the nod window (17° → 32° nose down while the reference swings 26° → 5° → 42° → 21° → 61°), which is the three nods averaged, as in run 1, and then tips onto its beak. The staged chain (run 2 → run 3 → run 4 @500 → run 5) taught the slump first, then the catches from droop-peak spawns, then the snuggle, each stage starting from the previous policy; that order is what this task needs. Until a single-run curriculum reproduces it, the trick's recipe is the staged chain.
 
 ## How it is taught
 
