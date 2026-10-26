@@ -234,6 +234,16 @@ uv run train Mjlab-SleepyDuck-Flat-MicroDuck --env.scene.num-envs 4096   # 5,000
 
 Run 8 tracks the routine more closely; run 5's catches are a little snappier and its worst landings mid-walk a little gentler.
 
+**But it nods standing up.** Watching the video, it does the nods on its feet and only sits as it falls asleep, the opposite of the routine (sit from 2.3 s, then nod), and a duck nodding off on its feet lands from standing height. Measured over the routine (play config, 256 ducks): run 8 first gets down to sitting height at **6.24 s** and spends **0%** of the nod window (2.3–5.9 s) seated; run 5 sits at **4.26 s**, seated for 45% of it. The leg pose term is a mean of per-joint Gaussians over ten joints, and only the two knees tell standing from sitting, so standing cost under a point a step against the head, pitch and head-turn terms. None of the evaluator's metrics measured the sit.
+
+## Run 9: sit down before the nods
+
+Commit `85c2490a`, run 8's three stages plus:
+
+- **`sleepy_height`** (weight 3, std 15 mm): Gaussian tracking of the trunk height, from a new `"z"` per keyframe: standing 115 mm, sat 61 mm (from 2.3 s), on the beak 66 mm, snuggled 68 mm, all measured in sim.
+- **A seated gate on the nods**: from 2.3 s to the slump, the head, coarse head and head-turn terms are multiplied by a Gaussian on the trunk height (std 20 mm), so a nod only pays while sitting.
+- **The evaluator reports the sit**: when the trunk first gets below 73 mm, and the share of the nod window spent below it.
+
 ## The known risks
 
 1. **Telling the nods apart.** The actor has no clock. Depth alone was not enough in run 1; run 2 adds the head-turn counter. If the eval still shows fewer than three nods, make the turn steps bigger (or go back to two nods).
