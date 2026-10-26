@@ -244,6 +244,24 @@ Commit `85c2490a`, run 8's three stages plus:
 - **A seated gate on the nods**: from 2.3 s to the slump, the head, coarse head and head-turn terms are multiplied by a Gaussian on the trunk height (std 20 mm), so a nod only pays while sitting.
 - **The evaluator reports the sit**: when the trunk first gets below 73 mm, and the share of the nod window spent below it.
 
+**It works: the whole routine, in order, from one run.** Headless evals, zero commands:
+
+| | Iteration 1500 | 3500 | 4000 | 4500 | 4999 (1,024 ducks) |
+|---|---|---|---|---|---|
+| Sat down at (reference 2.3 s) / nod window seated | 1.80 s / 100% | 1.76 s / 100% | 1.84 s / 100% | 1.82 s / 100% | 1.78 s / 100% |
+| Three nods, stand / training DR | 0% / 0% | 98% / 100% | 100% / 100% | 100% / 100% | 100% / 100% |
+| Asleep / snuggled, stand | 75% / 0% | 100% / 0% | 97% / 39% | 100% / 100% | 100% / 100% |
+| Jerk speed (reference 1.99 rad/s) | – | 2.29 | 2.12 | 1.81 | 2.21 |
+| Head turn at the nods (target 9°, 17°, 26°) | 6°, 10°, 14° | 10°, 21°, 29° | 8°, 17°, 26° | 10°, 17°, 27° | 9°, 17°, 26° |
+
+Iteration 4999, mid-walk with training DR (1,024 ducks): **0% toppled**, asleep 100%, snuggled 99.9%, three nods 99%, sat down at 1.80 s; head landing median 0.20 m/s, 99th percentile 0.45 m/s. From a stand: head landing median 0.20 m/s, 99th percentile 0.45, worst 0.48. Training took 5 h 14 m on an RTX 3080 Ti (114 days of simulated practice).
+
+**Candidate policy: run 9, iteration 4999**, the config at commit `85c2490a`, trained from scratch with one command:
+
+```bash
+uv run train Mjlab-SleepyDuck-Flat-MicroDuck --env.scene.num-envs 4096
+```
+
 ## The known risks
 
 1. **Telling the nods apart.** The actor has no clock. Depth alone was not enough in run 1; run 2 adds the head-turn counter. If the eval still shows fewer than three nods, make the turn steps bigger (or go back to two nods).
