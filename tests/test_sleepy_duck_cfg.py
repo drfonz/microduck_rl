@@ -34,6 +34,7 @@ _COSTS = {
     "sleepy_head_impact_cost",
 }
 _REWARDS = {
+    "sleepy_height",
     "sleepy_head",
     "sleepy_head_coarse",
     "sleepy_pitch",
@@ -246,7 +247,7 @@ def test_head_turn_jobs_hand_over_at_the_snuggle():
 
     r = make_microduck_sleepy_duck_env_cfg().rewards
     counter, snuggle = r["sleepy_head_turn"], r["sleepy_snuggle"]
-    assert counter.func is snuggle.func is sleepy_duck_mdp.pose_track_window
+    assert counter.func is sleepy_duck_mdp.pose_track_seated and snuggle.func is sleepy_duck_mdp.pose_track_window
     assert counter.params["t_end"] == snuggle.params["t_start"] == SNUGGLE_START
     assert snuggle.params["std"] > 2 * counter.params["std"]
     # Yaw alone (run 4's yaw+roll term was satisfied by roll alone), with a
@@ -384,4 +385,54 @@ def test_one_run_three_stages():
 
     end = at(MAX_ITERATIONS - 1)
     assert end["joint_torque_rate_l2"] == -5e-4 and end["com"] == 0.01  # as run 5 ended
+
+
+def test_sits_down_before_the_nods():
+    """Runs 5 and 8 nodded on their feet (sat at 4.3 s and 6.2 s). The trunk height is tracked,
+    and the nod terms only pay while sitting, from SAT_DOWN until the slump."""
+    from mjlab_microduck.tasks import sleepy_duck_mdp
+    from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import (
+        BEAK_Z, SAT_DOWN, SIT_Z, SNUGGLE_Z, SPAWN_STATES, STAND_Z,
+    )
+
+    assert all("z" in k for k in KEYFRAMES)
+    assert STAND_Z - SIT_Z > 0.04  # the sit is about 5 cm lower: unmistakable
+    z_at = {k["t"]: k["z"] for k in KEYFRAMES}
+    assert z_at[1.0] == STAND_Z and z_at[SAT_DOWN] == SIT_Z and z_at[SLUMP_START] == SIT_Z
+    assert all(z_at[k["t"]] == SIT_Z for k in KEYFRAMES if SAT_DOWN <= k["t"] <= SLUMP_START)
+    for st in SPAWN_STATES:  # the measured, settled heights
+        assert abs(st["z"] - z_at[st["t"]]) < 0.003, st["t"]
+    assert z_at[BEAK_LANDED] == BEAK_Z and z_at[EPISODE_LENGTH_S] == SNUGGLE_Z
+    r = make_microduck_sleepy_duck_env_cfg().rewards
+    assert r["sleepy_height"].func is sleepy_duck_mdp.height_track and r["sleepy_height"].weight > 0
+    for name in ("sleepy_head", "sleepy_head_coarse", "sleepy_head_turn"):
+        p = r[name].params
+        assert r[name].func is sleepy_duck_mdp.pose_track_seated, name
+        assert (p["seated_start"], p["seated_end"]) == (SAT_DOWN, SLUMP_START), name
+
+
+def test_seated_gate_and_height_tracking():
+    """With a stand-in env: during the nods a standing duck scores ~0, a sitting one ~1; outside
+    the window the gate is 1 whatever the height."""
+    from types import SimpleNamespace
+
+    from mjlab_microduck.tasks import sleepy_duck_mdp
+    from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import SAT_DOWN, SIT_Z, STAND_Z
+
+    class Scene(dict):
+        env_origins = torch.zeros(2, 3)
+
+    def env_at(t: float) -> SimpleNamespace:
+        robot = SimpleNamespace(data=SimpleNamespace(root_link_pos_w=torch.tensor([[0, 0, STAND_Z], [0, 0, SIT_Z]])))
+        return SimpleNamespace(scene=Scene(robot=robot), episode_length_buf=torch.full((2,), round(t / 0.02)), step_dt=0.02)
+
+    nods = env_at(3.0)
+    g = sleepy_duck_mdp.seated_gate(nods, KEYFRAMES, SAT_DOWN, SLUMP_START, std=0.02)
+    assert g[0] < 0.01 and g[1] > 0.95
+    h = sleepy_duck_mdp.height_track(nods, KEYFRAMES, std=0.015)
+    assert h[0] < 0.01 and h[1] > 0.95
+    yawn = env_at(0.8)
+    assert torch.all(sleepy_duck_mdp.seated_gate(yawn, KEYFRAMES, SAT_DOWN, SLUMP_START) == 1.0)
+    h = sleepy_duck_mdp.height_track(yawn, KEYFRAMES, std=0.015)
+    assert h[0] > 0.95 and h[1] < 0.01  # the yawn is standing
 

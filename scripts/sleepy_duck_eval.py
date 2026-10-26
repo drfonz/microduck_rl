@@ -54,6 +54,8 @@ from mjlab_microduck.tasks.microduck_sleepy_duck_env_cfg import (
 TASK = "Mjlab-SleepyDuck-Flat-MicroDuck"
 _NECK, _HEAD_PITCH, _HEAD_YAW = 5, 6, 7
 WALK_SETTLE_S = 0.5  # --from-walk: foot lifts before this are the stride finishing
+SAT_Z = 0.073  # m: trunk below this = sitting (sat at about 0.061, standing at about 0.115)
+SAT_BY = 2.3  # s: the reference has the duck sat from here, before the first nod
 VIDEO_AZIMUTH = 215.0  # with the duck facing +x: front-left, the side its face turns to (checked)
 NODS_FROM = 2.3  # s: seated, the nodding starts
 NOD_PROMINENCE = 0.12  # rad: a droop-and-catch smaller than this is not a nod
@@ -128,7 +130,7 @@ def main() -> None:
     early_head = torch.zeros(B, dtype=torch.bool)
     head_impact = torch.zeros(B)
     lifted_steps = torch.zeros(B)
-    pitch_log, ref_log, nose_log, nose_ref_log, yaw_log = [], [], [], [], []
+    pitch_log, ref_log, nose_log, nose_ref_log, yaw_log, z_log = [], [], [], [], [], []
     start_xy = None
 
     for k in range(n_steps):
@@ -142,6 +144,7 @@ def main() -> None:
         q = robot.data.joint_pos[:, servo_ids].cpu()
         q_ref = play_dead_mdp.reference_pose_at(tt, KEYFRAMES, home)
         xy = (robot.data.root_link_pos_w[:, :2] - env.scene.env_origins[:, :2]).cpu()
+        z_log.append((robot.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]).cpu())
         if start_xy is None:
             start_xy = xy.clone()
         obs, _, terminated, truncated, _ = env.step(torch.as_tensor(act, device=env.device))
@@ -215,6 +218,17 @@ def main() -> None:
           + "   (target " + ", ".join(f"{deg(want):.0f}°" for want, _ in turn_at) + ")")
     print(f"jerk (catch) speed  : {np.median(catches) if catches else float('nan'):5.2f} rad/s median "
           f"(reference {ref_catch / env.step_dt:.2f})")
+    # The sit: when the trunk first gets down to sitting height, and how much of the nodding is
+    # done sitting (a duck nodding off on its feet would land from standing height).
+    Z = torch.stack(z_log)  # (T, B)
+    t_axis = torch.arange(Z.shape[0]) * env.step_dt
+    low = Z < SAT_Z
+    first = torch.where(low.any(0), low.float().argmax(0) * env.step_dt, torch.tensor(float("inf")))
+    in_nods = (t_axis >= SAT_BY) & (t_axis < SLUMP_START)
+    seated = low[in_nods].float().mean(0)
+    print(f"sat down at         : {first[ok].median().item() if ok.any() else float('nan'):5.2f} s median "
+          f"(reference {SAT_BY:.1f} s); seated for {seated[ok].mean().item() * 100:.0f}% of the nods "
+          f"({SAT_BY:.1f}–{SLUMP_START:.1f} s), fully seated in {(seated[ok] > 0.95).float().mean().item() * 100:.0f}%")
     print(f"head down too early : {early_head.float().mean() * 100:5.1f}% (before {HEAD_DOWN_ALLOWED:.1f} s)")
     print(f"a foot lifted       : {lifted_steps.mean() * env.step_dt:5.2f} s per episode (target 0)")
     landed = head_impact[head_impact > 0]

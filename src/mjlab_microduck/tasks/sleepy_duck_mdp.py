@@ -73,6 +73,69 @@ def pose_track_window(
     return play_dead_mdp.pose_track(env, keyframes, joint_indices, std, asset_cfg) * gate
 
 
+def reference_height_at(t: torch.Tensor, keyframes: Sequence[dict]) -> torch.Tensor:
+    """(B,) reference trunk height (m) at episode time ``t``: the keyframes' "z", with the same
+    segments and blends as the pose and the pitch."""
+    idx, a = play_dead_mdp.keyframe_segment(t, [k["t"] for k in keyframes])
+    z = torch.as_tensor([k["z"] for k in keyframes], device=t.device, dtype=t.dtype)
+    return z[idx] + a * (z[idx + 1] - z[idx])
+
+
+def _trunk_height(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    return asset.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+
+
+def height_track(
+    env: ManagerBasedRlEnv,
+    keyframes: Sequence[dict],
+    std: float = 0.015,
+    asset_cfg: SceneEntityCfg = _ROBOT,
+) -> torch.Tensor:
+    """Gaussian tracking of the reference trunk height, in [0, 1]: standing, the sit (about 5 cm
+    lower), then the slump. The leg pose term alone let the duck nod on its feet: it averages
+    over ten joints, and only the two knees tell standing from sitting."""
+    err = _trunk_height(env, asset_cfg) - reference_height_at(_episode_time(env), keyframes)
+    return torch.nan_to_num(torch.exp(-((err / std) ** 2)), nan=0.0)
+
+
+def seated_gate(
+    env: ManagerBasedRlEnv,
+    keyframes: Sequence[dict],
+    t_start: float,
+    t_end: float,
+    std: float = 0.02,
+    asset_cfg: SceneEntityCfg = _ROBOT,
+) -> torch.Tensor:
+    """(B,) in [0, 1]: while ``t_start <= clock < t_end``, how close the trunk is to its reference
+    height (a Gaussian); 1 outside that window. It multiplies the nod rewards, so a nod only pays
+    while the duck is sitting: nodding off on its feet would land it from standing height."""
+    t = _episode_time(env)
+    inside = (t >= t_start) & (t < t_end)
+    err = _trunk_height(env, asset_cfg) - reference_height_at(t, keyframes)
+    g = torch.nan_to_num(torch.exp(-((err / std) ** 2)), nan=0.0)
+    return torch.where(inside, g, torch.ones_like(g))
+
+
+def pose_track_seated(
+    env: ManagerBasedRlEnv,
+    keyframes: Sequence[dict],
+    joint_indices: Sequence[int],
+    std: float = 0.3,
+    seated_start: float = 0.0,
+    seated_end: float = 0.0,
+    height_std: float = 0.02,
+    t_start: float = 0.0,
+    t_end: float = math.inf,
+    asset_cfg: SceneEntityCfg = _ROBOT,
+) -> torch.Tensor:
+    """pose_track_window times seated_gate: inside ``seated_start <= clock < seated_end`` the pose
+    only pays while the trunk is at its reference height."""
+    return pose_track_window(env, keyframes, joint_indices, std, t_start, t_end, asset_cfg) * seated_gate(
+        env, keyframes, seated_start, seated_end, height_std, asset_cfg
+    )
+
+
 def pose_l1_cost_window(
     env: ManagerBasedRlEnv,
     keyframes: Sequence[dict],

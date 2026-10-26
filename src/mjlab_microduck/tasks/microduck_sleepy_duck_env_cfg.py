@@ -120,26 +120,33 @@ SNUGGLE_PITCH = math.radians(60.0)  # settled at 60–61° in the pose study
 ASLEEP_BEAK_POSE: dict[int, float] = {**SIT_POSE, **BEAK_DOWN_HEAD}
 ASLEEP_POSE: dict[int, float] = {**SIT_POSE, **SNUGGLE_HEAD}
 
+# Trunk height above the floor (m), measured in sim: standing at HOME 115 mm (evaluation, t = 0,
+# 26 Oct 2026); the settled sit 61 mm, asleep on the beak 66 mm and snuggled 68 mm (pose study,
+# as SPAWN_STATES below). The sit is what tells sitting from standing, which the leg pose term
+# barely does (runs 5 and 8 nodded on their feet).
+STAND_Z, SIT_Z, BEAK_Z, SNUGGLE_Z = 0.115, 0.061, 0.066, 0.068
+
 # Reference timeline (seconds from episode start). Each keyframe blends into
 # the next with a smoothstep. Still holds are kept short (≤ 0.3 s): a still
 # pose is ambiguous for an actor that cannot see a clock (PoliteBow lesson).
 KEYFRAMES: list[dict] = [
-    {"t": 0.0, "pose": {}, "pitch": 0.0},                         # standing (HOME)
-    {"t": 0.7, "pose": YAWN_HEAD, "pitch": 0.0},                  # yawn: nose up
-    {"t": 1.0, "pose": YAWN_HEAD, "pitch": 0.0},                  # ...hold the yawn
-    {"t": 2.3, "pose": SIT_POSE, "pitch": 0.0},                   # sat down, head level
-    {"t": 3.1, "pose": {**SIT_POSE, **NOD_1}, "pitch": 0.0},      # nod 1: droop
-    {"t": 3.4, "pose": {**SIT_POSE, **CATCH_1}, "pitch": 0.0},    # ...jerk!
-    {"t": 4.3, "pose": {**SIT_POSE, **NOD_2}, "pitch": 0.04},     # nod 2: deeper
-    {"t": 4.6, "pose": {**SIT_POSE, **CATCH_2}, "pitch": 0.02},   # ...jerk
-    {"t": 5.6, "pose": {**SIT_POSE, **NOD_3}, "pitch": 0.08},     # nod 3: deeper still
-    {"t": 5.9, "pose": {**SIT_POSE, **CATCH_3}, "pitch": 0.04},   # ...a weak jerk
-    {"t": 7.5, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH},  # slumps onto its beak
-    {"t": 7.8, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH},  # a beat
-    {"t": 8.7, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH},      # snuggles onto its cheek
-    {"t": 10.5, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH},     # fast asleep
+    {"t": 0.0, "pose": {}, "pitch": 0.0, "z": STAND_Z},                         # standing (HOME)
+    {"t": 0.7, "pose": YAWN_HEAD, "pitch": 0.0, "z": STAND_Z},                  # yawn: nose up
+    {"t": 1.0, "pose": YAWN_HEAD, "pitch": 0.0, "z": STAND_Z},                  # ...hold the yawn
+    {"t": 2.3, "pose": SIT_POSE, "pitch": 0.0, "z": SIT_Z},                     # sat down, head level
+    {"t": 3.1, "pose": {**SIT_POSE, **NOD_1}, "pitch": 0.0, "z": SIT_Z},        # nod 1: droop
+    {"t": 3.4, "pose": {**SIT_POSE, **CATCH_1}, "pitch": 0.0, "z": SIT_Z},      # ...jerk!
+    {"t": 4.3, "pose": {**SIT_POSE, **NOD_2}, "pitch": 0.04, "z": SIT_Z},       # nod 2: deeper
+    {"t": 4.6, "pose": {**SIT_POSE, **CATCH_2}, "pitch": 0.02, "z": SIT_Z},     # ...jerk
+    {"t": 5.6, "pose": {**SIT_POSE, **NOD_3}, "pitch": 0.08, "z": SIT_Z},       # nod 3: deeper still
+    {"t": 5.9, "pose": {**SIT_POSE, **CATCH_3}, "pitch": 0.04, "z": SIT_Z},     # ...a weak jerk
+    {"t": 7.5, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH, "z": BEAK_Z},  # slumps onto its beak
+    {"t": 7.8, "pose": ASLEEP_BEAK_POSE, "pitch": BEAK_DOWN_PITCH, "z": BEAK_Z},  # a beat
+    {"t": 8.7, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH, "z": SNUGGLE_Z},    # snuggles onto its cheek
+    {"t": 10.5, "pose": ASLEEP_POSE, "pitch": SNUGGLE_PITCH, "z": SNUGGLE_Z},   # fast asleep
 ]
 EPISODE_LENGTH_S = KEYFRAMES[-1]["t"]  # 10.5 s → --duration-s 10.5
+SAT_DOWN = KEYFRAMES[3]["t"]  # 2.3 s: sat, before the first nod
 SLUMP_START = KEYFRAMES[9]["t"]  # 5.9 s: the final droop begins
 # The head may touch the floor from here (the beak lands at ~7.5 s); before
 # this, touching down is a face-plant.
@@ -256,17 +263,19 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # tighter than the legs, so a 0.3 rad nod is clearly worth doing. Run 2
     # (std 0.25, weight 3) settled for averaging the nods; tighter and heavier
     # makes the average cost more.
+    # The nods only pay while sitting (see seated_gate): runs 5 and 8 nodded on their feet.
+    seated = {"seated_start": SAT_DOWN, "seated_end": SLUMP_START, "height_std": 0.02}
     cfg.rewards["sleepy_head"] = RewardTermCfg(
-        func=play_dead_mdp.pose_track,
+        func=sleepy_duck_mdp.pose_track_seated,
         weight=4.0,
-        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.2},
+        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.2, **seated},
     )
     # Run 2's looser head tracking, for the first stage: follow the head's
     # overall path while the slump is learnt, before the nods are asked for.
     cfg.rewards["sleepy_head_coarse"] = RewardTermCfg(
-        func=play_dead_mdp.pose_track,
+        func=sleepy_duck_mdp.pose_track_seated,
         weight=3.0,
-        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.25},
+        params={**kf, "joint_indices": _HEAD_PITCH_JOINTS, "std": 0.25, **seated},
     )
     cfg.rewards["sleepy_head_l1_cost"] = RewardTermCfg(
         func=play_dead_mdp.pose_l1_cost,
@@ -277,6 +286,11 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # bum. This is what makes the slump a lowering instead of a fall.
     cfg.rewards["sleepy_pitch"] = RewardTermCfg(
         func=play_dead_mdp.pitch_track, weight=3.0, params={**kf, "std": 0.25}
+    )
+    # Trunk height: stand for the yawn, sit down (5 cm lower) before the nods, then the slump.
+    # Run 8 sat only as it fell asleep, at 6.2 s; run 5 halfway through the nods.
+    cfg.rewards["sleepy_height"] = RewardTermCfg(
+        func=sleepy_duck_mdp.height_track, weight=3.0, params={**kf, "std": 0.015}
     )
     # Legs: stand, then sit, then stay sat. Generous std, as in PlayDead.
     cfg.rewards["sleepy_legs"] = RewardTermCfg(
@@ -293,9 +307,9 @@ def make_microduck_sleepy_duck_env_cfg(play: bool = False) -> ManagerBasedRlEnvC
     # tells the nods apart). std 0.25 so a 0.15 rad step between nods is
     # clearly worth taking. Until the snuggle starts.
     cfg.rewards["sleepy_head_turn"] = RewardTermCfg(
-        func=sleepy_duck_mdp.pose_track_window,
+        func=sleepy_duck_mdp.pose_track_seated,
         weight=2.0,
-        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.25, "t_end": SNUGGLE_START},
+        params={**kf, "joint_indices": _HEAD_TURN_JOINTS, "std": 0.25, "t_end": SNUGGLE_START, **seated},
     )
     # Job 2, the snuggle onto the cheek, the punchline. Runs 2 and 3 never
     # learnt it with the tight std above: it starts ~1 rad from its target,
