@@ -234,17 +234,21 @@ def soften_scene(model: mujoco.MjModel) -> None:
 
 
 def render(model: mujoco.MjModel, data: mujoco.MjData, azimuth: float, elevation: float = -10.0,
-           size: tuple[int, int] = (960, 720)):
-    """A still framed on the whole duck."""
+           size: tuple[int, int] = (960, 720), focus: str | None = None, distance: float | None = None):
+    """A still framed on the whole duck, or close up on one body (``focus``)."""
     from PIL import Image
 
     renderer = mujoco.Renderer(model, size[1], size[0])
     cam = mujoco.MjvCamera()
     cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-    bodies = data.xpos[1:]  # every robot body (0 is the world)
-    lo, hi = bodies.min(axis=0), bodies.max(axis=0)
-    cam.lookat[:] = 0.5 * (lo + hi)
-    cam.distance = 0.22 + 1.1 * float(np.max(hi - lo))
+    if focus:
+        cam.lookat[:] = data.xpos[model.body(focus).id]
+        cam.distance = distance or 0.14
+    else:
+        bodies = data.xpos[1:]  # every robot body (0 is the world)
+        lo, hi = bodies.min(axis=0), bodies.max(axis=0)
+        cam.lookat[:] = 0.5 * (lo + hi)
+        cam.distance = distance or (0.22 + 1.1 * float(np.max(hi - lo)))
     cam.azimuth = azimuth
     cam.elevation = elevation
     renderer.update_scene(data, camera=cam)
@@ -281,6 +285,8 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=3.0)
     parser.add_argument("--azimuth", type=float, default=140.0, help="camera azimuth of the front stills (180 = face on)")
     parser.add_argument("--elevation", type=float, default=-10.0, help="camera elevation of the front stills")
+    parser.add_argument("--look", default="sim", choices=("sim", "warm"), help="sim: the blue shiny floor; warm: studio")
+    parser.add_argument("--closeup", default=None, help="body to frame in a close-up still (e.g. ankle_left)")
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
     captions = dict(STORYBOARD) if args.storyboard else {}
@@ -288,7 +294,9 @@ def main() -> None:
 
     # Raw MuJoCo copy of the same robot: for placing it on the floor and for the stills.
     model = mujoco.MjModel.from_xml_path(str(SCENE_XML))
-    soften_scene(model)
+    if args.look == "warm":
+        soften_scene(model)
+    model.vis.global_.offwidth, model.vis.global_.offheight = 1920, 1440
     data = mujoco.MjData(model)
 
     cfg = load_env_cfg(TASK, play=True)
@@ -368,6 +376,9 @@ def main() -> None:
             side.append((caption, render(model, data, azimuth=90.0)))
             front[-1][1].save(args.out / f"{name}-front34.png")
             side[-1][1].save(args.out / f"{name}-side.png")
+            if args.closeup:
+                render(model, data, azimuth=args.azimuth, elevation=args.elevation, size=(1600, 1200),
+                       focus=args.closeup).save(args.out / f"{name}-closeup-{args.closeup}.png")
     if args.out:
         stem = "storyboard" if args.storyboard else "sheet"
         contact_sheet(front, args.out / f"{stem}-front34.png")
